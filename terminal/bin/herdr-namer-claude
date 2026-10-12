@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# codex-совместимый шим для herdr-plugin-renamer: имена вкладок, спейсов и веток
+# генерирует Claude (claude -p на Haiku, с той же учёткой и настройками сети, что у claude
+# в ~/.claude/settings.json), а не Codex.
+#
+# Плагин зовёт бинарь из HERDR_NAMING_CODEX_BIN так:
+#   <bin> exec --skip-git-repo-check --ignore-user-config --ephemeral \
+#         -s read-only -m <model> -c <k=v> -c <k=v> -o <slug_file> <prompt>
+# и читает готовый слаг из <slug_file>. Ответ на stdout плагин игнорирует.
+#
+# Если ответ не похож на слаг (сообщение об ошибке, отказ, проза) — выходим с 1,
+# и плагин собирает слаг локально сам.
+
+set -uo pipefail
+
+MODEL="${HERDR_NAMING_CLAUDE_MODEL:-claude-haiku-4-5-20251001}"
+CLAUDE_BIN="${HERDR_NAMING_CLAUDE_BIN:-claude}"
+TIMEOUT="${HERDR_NAMING_CLAUDE_TIMEOUT:-25}"
+
+slug_file=""
+prompt=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      slug_file="${2:-}"; shift 2 || shift ;;
+    -m|--model|-s|--sandbox|-c|--config)
+      shift 2 || shift ;;
+    exec|--skip-git-repo-check|--ignore-user-config|--ephemeral|--json|--full-auto)
+      shift ;;
+    --)
+      shift ;;
+    *)
+      prompt="$1"; shift ;;
+  esac
+done
+
+[ -n "$prompt" ] || exit 1
+
+# Запуск с жёстким лимитом: сам плагин рубит нас на 30 с. HERDR_* снимаем, иначе
+# хук интеграции herdr внутри claude отправит серверу статус чужого агента.
+# hooks:{} гасит пользовательские хуки — это аналог codex --ignore-user-config:
+# прогон получается детерминированный, без рекурсии и без лишнего контекста.
+# --tools "" обязателен: в промпте плагина лежит текст вкладки, и без него claude
+# принимал его за задание и выполнял инструменты — CronCreate, Bash, Monitor — второй раз
+# (поймано 25.09.2026: фоновые команды тестовой вкладки запустились дважды).
+run_claude() {
+  local out_file rc child killer
+  out_file="$(mktemp "${TMPDIR:-/tmp}/herdr-namer-claude.XXXXXX")" || return 1
+
+  env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
+      -u HERDR_SOCKET_PATH -u HERDR_BIN_PATH \
+      "$CLAUDE_BIN" -p "$prompt" \
+      --model "$MODEL" \
+      --tools "" \
+      --settings '{"disableAllHooks":true}' \
+      --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+      </dev/null >"$out_file" 2>/dev/null &
+  child=$!
+
+  # Киллер по таймауту. Его stdout/stderr уводим в /dev/null: иначе он держал бы
+  # открытым пайп вызывающей стороны и ожидание длилось бы весь лимит целиком.
+  { sleep "$TIMEOUT"; kill -9 "$child"; } >/dev/null 2>&1 &
+  killer=$!
+
+  wait "$child"
+  rc=$?
+  kill "$killer" >/dev/null 2>&1
+  wait "$killer" 2>/dev/null
+
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$out_file"
+    return 1
+  fi
+  cat "$out_file"
+  rm -f "$out_file"
+}
+
+# Слаг, а не проза: 2–6 слов в kebab-case. Всё остальное (сообщения об ошибках,
+# «Not logged in», отказы) отбраковываем.
+raw="$(run_claude)" || exit 1
+raw="$(printf '%s' "$raw" | tr -d '\r' | sed -e '/^[[:space:]]*$/d' | tail -1 | tr -d '[:space:]')"
+slug="$(printf '%s' "$raw" | grep -oE '^[a-z0-9]+(-[a-z0-9]+){1,5}$' | head -1)"
+
+[ -n "$slug" ] || exit 1
+
+if [ -n "$slug_file" ]; then
+  printf '%s\n' "$slug" >"$slug_file" || exit 1
+fi
+printf '%s\n' "$slug"

@@ -1,0 +1,1 @@
+{ "name": "session-state", "version": "0.1.0", "description": "Пишет хукам набора контекст, лимиты, модель и effort сессии" }

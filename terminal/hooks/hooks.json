@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "StopFailure": [
+      {
+        "matcher": "server_error|overloaded|unknown",
+        "hooks": [
+          {"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/api-error-autocontinue.sh\"", "timeout": 10}
+        ]
+      }
+    ]
+  }
+}

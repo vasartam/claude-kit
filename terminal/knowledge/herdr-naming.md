@@ -1,0 +1,76 @@
+# herdr: метка вкладки и автоименование
+
+## Метка вкладки — правило сессии
+
+Владелец находит вкладки по названию, а оно ставится по первому промпту, и сессия потом уходит
+в другую задачу. Поэтому после полноценного ответа сверить метку своей вкладки с задачей,
+которую решаем **сейчас**.
+
+- Текущая метка — в строке хука model-advisor («Вкладка herdr: «…»»), иначе
+  `herdr tab get "$HERDR_TAB_ID" | jq -r .result.tab.label` (префикс `[N]` — номер для хоткеев, не
+  часть названия).
+- Переименовать — `herdr tab rename "$HERDR_TAB_ID" "<название>"` **без** `[N]` (номер плагин
+  допишет). Такое имя ручное: автоматика вкладку больше не трогает, за актуальность отвечает сессия.
+  Вернуть автоматику — `herdr plugin action invoke herdr-automatic-rename.reset` (вкладка в фокусе).
+- Переименовывать **редко**: задача сменилась так, что старое название не подходит; выяснилось то,
+  что заметно сужает задачу («Падение сборки» → «Падает линтер во фронтенде»); в метке только ID
+  задачи или MR, kebab-слаг, `claude`, `zsh`, или побочная тема.
+- **Не** переименовывать из-за деталей той же темы и «чуть точнее»; сомнение — оставить. Частые
+  переименования хуже неточного названия: владелец узнаёт вкладку визуально (29.09.2026).
+- Название — по-русски, 3–7 слов, до ~45 символов (лимит метки 50): суть задачи, ID можно в конце.
+- Метка точная — ничего не делать и не упоминать. Переименовал — одна короткая строка в ответе.
+  `$HERDR_TAB_ID` пуст — правило не применяется.
+
+## Откуда берётся каждая строка сайдбара
+
+- **Метка вкладки** = `terminal_title` панели — заголовок, который агент выставляет себе сам.
+  Плагин `qu8n/herdr-automatic-rename` режет его по границе слова, у панели без задачи показывает
+  имя процесса (`zsh`, `claude`). Лимит длины — `MAX_TITLE_LEN=50` в
+  `~/.config/herdr-automatic-rename/config.sh`, под него `sidebar_width = 60`; сразу по всем
+  вкладкам — `bash ~/herdr-automatic-rename/automatic-rename.sh event`.
+- `herdr pane report-metadata --title` кладёт значение в отдельное поле `title` и на метку **не**
+  влияет (проверено 27.08.2026) — подменять надо источник в плагине.
+- **Вторая строка** = `display_agent` панели; **имя спейса** — из директории панелей (плагин
+  добавляет `[N]` под биндинги 1–9).
+- Смотреть состояние: `herdr tab list`, `herdr agent list`, `herdr pane get <id>` (`label`,
+  `display_agent`, `terminal_title_stripped`).
+
+## Claude Code сам переименовывает сессию
+
+Автоимя сессии (механика — `<kit>/knowledge/claude-code-sessions.md`, «Имена сессий») **вытесняет**
+ИИ-заголовок в заголовке терминала, и метка вкладки превращается в слаг. Погасить можно только весь
+заголовок — `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` (herdr увидит просто `claude`); развести имя и
+заголовок можно только снаружи — патч плагина ниже. Признак подмены: `terminal_title` после снятия
+спиннера равен `name` из `~/.claude/sessions/<pid>.json`; человеческий заголовок — последний
+`aiTitle` в транскрипте, отличный от имени.
+
+## Плагины автоименования
+
+- **qu8n/herdr-automatic-rename** — метки вкладок и нумерация, нужен `jq`. Подключён локальным клоном
+  `~/herdr-automatic-rename` (ветка `local-patches`, `herdr plugin link`); shell-хук в `~/.zshrc` —
+  по фиксированному пути `~/herdr-automatic-rename/shell/hook.zsh`. В `config.toml`
+  `prompt_new_tab_name = false` (имя из промпта новой вкладки считалось бы ручным). Патч:
+  заголовок, целиком равный имени сессии, подменяется последним ИИ-заголовком из транскрипта до
+  переименования (кэш `~/.local/state/herdr-automatic-rename/human-titles/`); цена — метка замирает
+  на теме момента переименования. Патч живёт внутри чужих jq-программ: после ребейза обязателен
+  `./tests/run.sh session`, иначе вкладки молча вернутся к слагам.
+- **wyattjoh/herdr-plugin-renamer** — слаг из первого промпта для ветки и воркспейса в
+  авто-worktree (только ветки `worktree/…`). Собирается cargo (rustup, `. "$HOME/.cargo/env"` в
+  `~/.zshrc`). Префикс веток — файл `branch-prefix` в `~/.config/herdr/plugins/config/herdr-plugin-renamer/`
+  (свой ник). Локальные патчи (ветка `local-patches`, после правки `cargo build --release`):
+  `src/codex.rs` — дефолтный бинарь движка = шим, если он есть (`HERDR_NAMING_CODEX_BIN` главнее);
+  `src/herdr.rs` — `pane_report_task` с `with_title = false`, иначе слаг затирает `display_agent` и
+  подписи; `src/main.rs` — `pane_rename` в холодной фазе выключен. На macOS on-device движок Apple
+  FoundationModels требует полного Xcode: с одними Command Line Tools он молча не собирается, и
+  плагин берёт следующий движок цепочки.
+- Оба клона подключены `herdr plugin link` (не `install`: тот перекачал бы апстрим и стёр патчи).
+  Обновление с апстрима — `local-update.sh` в клоне (fetch + rebase + сборка), детали и откат —
+  `LOCAL-PATCHES.md`. Форки — в своём GitLab (`origin`), `upstream` — GitHub; shallow-клон перед
+  первым push — `git fetch --unshallow upstream`.
+- Убрать проставленный слаг: `herdr pane report-metadata <pane> --source plugin:herdr-plugin-renamer
+  --clear-title --clear-display-agent` и `herdr pane rename <pane> --clear`.
+
+## Шим herdr-namer-claude
+
+Слаги для renamer придумывает не Codex, а `claude -p` на Haiku через шим
+`herdr-namer-claude` (ссылкой в `~/.local/bin`): устройство и подключение — [tools.md](tools.md).

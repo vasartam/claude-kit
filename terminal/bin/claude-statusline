@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# Статусная строка Claude Code: модель и уровень effort, занятый контекст «сколько из скольких» и лимиты подписки,
+# как в /context и /usage, но всегда на экране. Claude Code передаёт JSON сессии на stdin
+# и показывает то, что скрипт напечатал.
+#
+#   Opus 5.5 ● high · 📁 ~ · ▰▰▰▱▱▱▱ 312k/1M 31% · 5ч 42% ↻ 18:00 · 7д 15% ↻ пн 10:00 · сегодня 6/17%
+#
+# 📁 — папка, в которой открыта сессия (домашняя — «~»), полоска — занятый контекст.
+# Цвет процента — по заполненности: плавно от зелёного через жёлтый к красному. Лимиты появляются
+# после первого ответа API и только у подписки. «Сегодня» — сколько недельного лимита потрачено за
+# день из дневной нормы; сверх нормы — оранжевым. Подключён в ~/.claude/settings.json (statusLine).
+#
+# Заодно пишет модель, effort и контекст в ~/.claude/session-status/<session_id>.json: в хуки
+# (UserPromptSubmit и др.) Claude Code их не передаёт, а хукам набора (model-advisor, context-guard) они нужны.
+set -u
+
+# jq — из PATH; PATH у статусной строки бывает урезанным, поэтому запасные каталоги — в конец.
+J=$(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin command -v jq || echo jq)
+in=$(cat)
+
+sid=$($J -r '.session_id // empty' <<<$in 2>/dev/null)
+# Ultracode Claude Code в статусную строку не передаёт. Берём последнее из двух событий в транскрипте:
+# ответ команды /effort («Ultracode on…» / «Ultracode off.») — пишется сразу при переключении — и
+# вложение ultra_effort_enter / ultra_effort_exit — появляется со следующим промптом.
+ultra=false
+tr=$($J -r '.transcript_path // empty' <<<$in 2>/dev/null)
+if [[ -n $tr && -r $tr ]]; then
+  last=$(grep -a -o -E '"content":"<local-command-stdout>[^"]{0,40}Ultracode (on|off)|"type":"ultra_effort_(enter|exit)"' "$tr" 2>/dev/null | tail -1)
+  [[ $last == *'Ultracode on'* || $last == *enter* ]] && ultra=true
+fi
+
+# Лимиты подписки общие для аккаунта, а Claude Code передаёт их из последнего ответа модели в этой сессии:
+# у простаивающей сессии они устаревают (или пропадает five_hour). Поэтому храним самые свежие из всех
+# сессий в общем ~/.claude/session-status/rate-limits.json и показываем их: свежее окно — с более поздним
+# сбросом, при том же сбросе — с большим процентом (внутри окна процент только растёт). Файл нужен и хукам
+# limit-guard и model-advisor: в хуки Claude Code лимиты не передаёт.
+lims=~/.claude/session-status/rate-limits.json
+old=$(cat "$lims" 2>/dev/null); [[ -z $old ]] && old=null
+# ts в файле — когда лимиты последний раз подтвердил ответ API, а не когда они менялись: иначе model-advisor
+# пишет «данные 70 мин назад» о процентах, которые просто не росли. Новый ответ этой сессии виден по смене
+# расхода токенов (current_usage); строка перерисовывается каждую секунду и у простаивающих сессий — по
+# одной перерисовке ответ не отличить. Ключ прошлого ответа — в <session_id>.json (поле usage_key).
+ukey=$($J -r '.context_window.current_usage // {} | [.input_tokens, .cache_read_input_tokens,
+        .cache_creation_input_tokens, .output_tokens] | map(. // 0) | if add > 0 then map(tostring) | join(",") else "" end' \
+      <<<$in 2>/dev/null)
+prev_ukey=$([[ -n $sid ]] && $J -r '.usage_key // empty' ~/.claude/session-status/$sid.json 2>/dev/null)
+answered=false
+[[ -n $ukey && $ukey != "$prev_ukey" ]] && $J -e '.rate_limits.seven_day // .rate_limits.five_hour' <<<$in >/dev/null 2>&1 &&
+  answered=true
+lim=$($J -c --argjson s "$old" '
+  def newer($a; $b): if $a.used_percentage == null then $b elif $b.used_percentage == null then $a
+    elif [$a.resets_at // 0, $a.used_percentage] >= [$b.resets_at // 0, $b.used_percentage] then $a else $b end;
+  (.rate_limits // {}) as $r | ($s // {} | del(.ts)) as $s
+  | $s + $r + {five_hour: newer($r.five_hour; $s.five_hour), seven_day: newer($r.seven_day; $s.seven_day)}
+  | with_entries(select(.value != null))' <<<$in 2>/dev/null)
+[[ -z $lim || $lim == '{}' ]] && lim=null
+if [[ $lim != null ]]; then
+  if [[ $answered == true || $lim != "$($J -c 'del(.ts)' <<<$old 2>/dev/null)" ]]; then
+    mkdir -p ~/.claude/session-status
+    $J -c '. + {ts: now}' <<<$lim >$lims.$$ 2>/dev/null && mv $lims.$$ $lims
+    # История для отчёта claude-usage-report: строка в ~/.claude/usage-log/limits.jsonl на каждый рост
+    # процента 5ч или 7д и на сброс окна (подтверждение без изменений строк не добавляет). Изредка две сессии пишут одно и то же дважды — отчёт повторы
+    # не считает.
+    rec=$($J -c --argjson s "$old" '{ts: (now | floor), h5: .five_hour.used_percentage, h5_reset: .five_hour.resets_at,
+                 d7: .seven_day.used_percentage, d7_reset: .seven_day.resets_at}
+               | select(.h5 != null and .d7 != null)
+               | select([.h5, .h5_reset, .d7, .d7_reset] != [$s.five_hour.used_percentage, $s.five_hour.resets_at,
+                                                           $s.seven_day.used_percentage, $s.seven_day.resets_at])' \
+          <<<$lim 2>/dev/null)
+    [[ -n $rec ]] && mkdir -p ~/.claude/usage-log && echo "$rec" >>~/.claude/usage-log/limits.jsonl
+  fi
+  # Окно, чьё время сброса прошло, а новых ответов ещё не было, — уже пустое. Недельное к тому же
+  # сдвигается на целое число недель вперёд: сброс случается в тот же день и час, и без этого дневная
+  # норма считалась бы по прошедшей дате («сегодня 0/100%» до первого ответа нового окна).
+  in=$($J -c --argjson l "$lim" '.rate_limits = ($l | with_entries(
+         if (.value | type) == "object" and .value.resets_at and .value.resets_at <= now
+         then .value.used_percentage = 0
+              | if .key == "seven_day"
+                then .value.resets_at += (((now - .value.resets_at) / 604800 | floor) + 1) * 604800 else . end
+         else . end))' <<<$in)
+fi
+
+# Дневная норма недельного лимита: остаток на начало дня ÷ оставшиеся рабочие дни (пн–пт) до сброса.
+# День начинается во время сброса недельного лимита (09:00), чтобы работа после полуночи шла в тот же
+# день. Процент на начало дня — в week-budget.json (общий для сессий; в первый день недели он 0).
+# Выходной считается одним днём, чтобы и у него была норма.
+day=null
+if $J -e '.rate_limits.seven_day.resets_at' <<<$in >/dev/null 2>&1; then
+  budget=~/.claude/session-status/week-budget.json
+  st=$(cat "$budget" 2>/dev/null); [[ -z $st ]] && st='{}'
+  day=$($J -c --argjson st "$st" '
+    .rate_limits.seven_day as $w | ($w.resets_at - 7 * 86400) as $ws
+    | ($ws + (((now - $ws) / 86400 | floor) * 86400)) as $ds
+    | (if $st.day_start == $ds then $st.start_pct elif $ds == $ws then 0 else $w.used_percentage end) as $start
+    | ([range(0; 7) | $ws + . * 86400 | select(. >= $ds) | strflocaltime("%u") | tonumber | select(. <= 5)]
+       | length + (if ($ds | strflocaltime("%u") | tonumber) > 5 then 1 else 0 end)) as $days
+    | {day_start: $ds, start_pct: $start, spent: ($w.used_percentage - $start),
+       norm: (if $days > 0 then (100 - $start) / $days else 100 - $start end)}' <<<$in 2>/dev/null) || day=null
+  [[ -z $day ]] && day=null
+  [[ $day != null ]] && $J -c '{day_start, start_pct}' <<<$day >$budget.$$ 2>/dev/null && mv $budget.$$ $budget
+fi
+
+# Сразу после сжатия (и в продолженной сессии до первого ответа) Claude Code отдаёт контекст пустым.
+# Тогда оцениваем его по транскрипту: последнее из «размер после сжатия» (postTokens) и расхода токенов
+# в последнем ответе модели. В строке такая оценка — с «~».
+est=null
+if [[ -n $tr && -r $tr ]] && ! $J -e '.context_window.current_usage // {}
+      | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) > 0' \
+      <<<$in >/dev/null 2>&1; then
+  # Файл задом наперёд: tac в GNU (Linux), tail -r в BSD (macOS).
+  if command -v tac >/dev/null; then rev=tac; else rev='tail -r'; fi
+  est=$($rev "$tr" | grep -a -m1 -E '"subtype":"compact_boundary"|"usage":\{"input_tokens"' |
+    $J '.compactMetadata.postTokens // (.message.usage | .input_tokens + (.cache_read_input_tokens // 0)
+        + (.cache_creation_input_tokens // 0)) // null' 2>/dev/null)
+  [[ -z $est ]] && est=null
+fi
+
+# Необязательная отметка «на каком размере контекста следующая проверка»: {"at": 650000} в
+# ~/.claude/session-status/<session_id>.ctx-mark. Её пишет хук context-guard, но может писать что угодно;
+# нет файла — нет и отметки, строка от этого не зависит.
+mark=null
+[[ -n $sid && -r ~/.claude/session-status/$sid.ctx-mark ]] &&
+  mark=$($J -c '.at // null' ~/.claude/session-status/$sid.ctx-mark 2>/dev/null)
+[[ $mark =~ ^[0-9]+$ ]] || mark=null
+
+if [[ -n $sid ]]; then
+  mkdir -p ~/.claude/session-status
+  $J -c --argjson ultra $ultra --argjson est $est --arg ukey "$ukey" '{model: .model.id, name: .model.display_name, effort: .effort.level,
+          ultracode: $ultra, window: .context_window.context_window_size,
+          used_pct: (if $est and (.context_window.context_window_size // 0) > 0
+                     then $est * 100 / .context_window.context_window_size | floor
+                     else .context_window.used_percentage end),
+          usage_key: (if $ukey == "" then null else $ukey end)}' \
+    <<<$in >~/.claude/session-status/$sid.json 2>/dev/null
+fi
+
+# Открыт сабагент — модель, effort и контекст в строке его, а не сессии. Какой агент открыт, Claude Code
+# в статусную строку не передаёт; это пишет мод agent-view-status в <session_id>.view.json вместе с
+# моделью и effort его последнего запроса. Контекст — по последнему ответу модели в транскрипте
+# сабагента; окно у Haiku 200k, у остальных — как у сессии. В файл для хуков (выше) это не попадает:
+# model-advisor и context-guard следят за основной сессией.
+view=$in
+sub=null
+vf=~/.claude/session-status/$sid.view.json
+aid=$([[ -n $sid ]] && $J -r '.agentId // empty' "$vf" 2>/dev/null)
+st=${tr%.jsonl}/subagents/agent-$aid.jsonl
+if [[ -n $aid && -n $tr && -r $st ]]; then
+  if command -v tac >/dev/null; then rev=tac; else rev='tail -r'; fi
+  resp=$($rev "$st" | grep -a -m1 '"usage":{"input_tokens"')
+  view=$($J -c --slurpfile v "$vf" --argjson r "${resp:-null}" '
+    $v[0] as $v | ($r.message // {}) as $m | ($v.model // $m.model) as $id
+    | .model = {id: $id, display_name: (try ($id | capture("^claude-(?<f>[a-z]+)-(?<a>\\d+)-(?<b>\\d+)")
+                                              | "\(.f[0:1] | ascii_upcase)\(.f[1:]) \(.a).\(.b)") catch $id)}
+    | (if $v.effort != null then .effort = {level: ($v.effort | tostring)} else del(.effort) end)
+    | .context_window = {context_window_size: (if $id | test("haiku") then 200000
+                                               else .context_window.context_window_size end),
+                         current_usage: ($m.usage // null), used_percentage: null}' <<<$in 2>/dev/null) &&
+    sub=$($J -c '.label // "сабагент"' "$vf") || view=$in
+fi
+[[ $sub != null ]] && { ultra=false; est=null; mark=null; }
+
+# Тема herdr (name из [theme] в его конфиге) — по ней подбираются оттенки зелёного/жёлтого/оранжевого/красного,
+# чтобы строка не выбивалась из палитры терминала; неизвестная тема или нет herdr — свои цвета.
+theme=$(awk -F'"' '/^\[/ {s = ($0 == "[theme]")} s && /^name[ \t]*=/ {print $2; exit}' \
+          "${HERDR_CONFIG:-$HOME/.config/herdr/config.toml}" 2>/dev/null)
+
+$J -r --argjson ultra $ultra --argjson day "$day" --argjson est $est --argjson mark "$mark" --argjson sub "$sub" \
+  --arg home "$HOME" --arg theme "${theme:-}" '
+  def k: if . >= 1000000 then "\((. / 100000 | floor) / 10)M" | sub("\\.0M$"; "M")
+         elif . >= 1000 then "\(. / 1000 | floor)k" else "\(.)" end;
+  # Плавно от зелёного (0%) через жёлтый (50%) к красному (100%), 24-битным цветом.
+  # Оттенки по теме herdr: зелёный, жёлтый, оранжевый, красный (rgb). Тема не из списка — прежние цвета строки.
+  def pal: {"gruvbox": [[78,186,101], [250,189,47], [254,128,25], [251,73,52]],
+            "dracula": [[80,250,123], [241,250,140], [255,184,108], [255,85,85]],
+            "nord": [[163,190,140], [235,203,139], [208,135,112], [191,97,106]],
+            "tokyo-night": [[158,206,106], [224,175,104], [255,158,100], [247,118,142]],
+            "catppuccin": [[166,227,161], [249,226,175], [250,179,135], [243,139,168]],
+            "one-dark": [[152,195,121], [229,192,123], [209,154,102], [224,108,117]]}[$theme]
+           // [[25,200,60], [255,210,60], [255,130,40], [255,50,60]];
+  def mix($a; $b; $f): [range(0; 3) | ($a[.] + ($b[.] - $a[.]) * $f | floor)];
+  def ansi($c): "\u001b[38;2;\($c[0]);\($c[1]);\($c[2])m";
+  # Единая шкала цвета: f от 0 до 1 — зелёный → жёлтый → оранжевый → красный, плавно (по четырём оттенкам pal).
+  def heat($f): pal as $c | ([$f, 0] | max | [., 1] | min) as $f
+                | ansi(if $f < 1/3 then mix($c[0]; $c[1]; $f * 3)
+                       elif $f < 2/3 then mix($c[1]; $c[2]; $f * 3 - 1)
+                       else mix($c[2]; $c[3]; $f * 3 - 2) end);
+  # Проценты (лимиты, норма дня): до 20% зелёный, от 20% до 85% плавно к красному, дальше красный.
+  def hue: heat((. - 20) / 65);
+  def paint: "\(hue)\(. | floor)%\u001b[0m";
+  # Полоска заполненности контекста из 7 делений: занятые — цветом, свободные — тусклым серым; непустой
+  # контекст — хотя бы одно деление. Цвет — по размеру занятого контекста в токенах, шкала heat: до 200k —
+  # зелёный, от 200k до 850k плавно к красному, выше — красный (тот же цвет у процента и размера рядом).
+  def barhue($t): heat(($t - 200000) / 650000);
+  def bar($t; $size): ([$t * 100 / $size, 0] | max | [., 100] | min) as $p
+           | ($p * 7 / 100 + 0.5 | floor | if $p > 0 then [., 1] | max else . end) as $n
+           | "\(barhue($t))\("▰" * $n // "")\u001b[38;2;90;90;90m\("▱" * (7 - $n) // "")\u001b[0m";
+  # Уровень effort — как выбранный уровень в меню /effort (тёмная тема, бинарник 2.1.284): жирным, low —
+  # warning, medium — success, high — permission, xhigh — autoAccept (там с переливом), max — радуга темы
+  # (там анимирована, здесь статична); значок уровня — как у Claude Code; ultracode — effortUltra.
+  def rgb($c; $t): "\u001b[1;38;2;\($c)m\($t)\u001b[0m";
+  def rainbow: ["235;95;87", "245;139;87", "250;195;95", "145;200;130", "130;170;220", "155;130;200",
+                "200;130;180"] as $r
+               | [split("") | to_entries[] | rgb($r[.key % 7]; .value)] | join("");
+  def effort: ascii_downcase as $l
+              | ({"low": ["○", "255;193;7"], "medium": ["◐", "78;186;101"], "high": ["●", "177;185;249"],
+                  "xhigh": ["◉", "175;135;255"], "max": ["◈", null]}[$l]) as $e
+              | if $l == "max" then "◈ max" | rainbow
+                elif $l | test("^ultra") then rgb("175;135;255"; "◈ \(.)")
+                elif $e then rgb($e[1]; "\($e[0]) \(.)")
+                else . end;
+  # Название модели — фирменным оранжевым Claude. Пояснение в скобках вроде «(1M context)» отбрасываем:
+  # оно есть не у всех сессий, а размер окна и так виден в блоке ctx.
+  def model: capture("^(?<n>[^(]*?)( *\\(.*)?$").n
+             | "\u001b[1;38;2;215;119;87m\(.)\u001b[0m";
+  # Папка, в которой открыта сессия (project_dir, а не current_dir: тот меняется от cd в Bash), домашняя — «~»;
+  # длинный — первый уровень, «…» и последний: ~/my-project/…/bar.
+  def dir: (if . == $home then "~" elif startswith($home + "/") then "~" + .[($home | length):] else . end)
+           | split("/") | if length > 4 then [.[0], .[1], "…", .[-1]] else . end | join("/")
+           | "📁 \(.)";
+  def when($fmt): if . then (. | strflocaltime($fmt)) else "" end;
+  def limit($name; $fmt):
+    if . and .used_percentage != null
+    then "\($name) \(.used_percentage | paint)\(if .resets_at then " ↻ " + (.resets_at | when($fmt)) else "" end)"
+    else empty end;
+  # Потрачено сегодня из дневной нормы: до нормы — от зелёного к жёлтому, сверх нормы — оранжевым.
+  def today: if . then (.spent | if . < 0 then 0 else . end) as $s | (.norm | floor) as $n
+             | "сегодня \(if $n > 0 then $s * 100 / $n else 100 end | hue)\($s | floor)/\($n)%\u001b[0m"
+             else empty end;
+
+  (.context_window // {}) as $cw
+  | ($cw.context_window_size // 0) as $size
+  | ($cw.current_usage // null) as $u
+  | (if $est then $est
+     elif $u then ($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens)
+     else null end) as $used
+  | (if $est and $size > 0 then $est * 100 / $size
+     else ($cw.used_percentage // (if $used and $size > 0 then $used * 100 / $size else null end)) end) as $pct
+  | (if $est then "~" else "" end) as $approx
+  | ($used // (if $pct != null then $pct * $size / 100 else null end)) as $tok
+  | [
+      # Открытый сабагент — его подпись бирюзовым (этого цвета в строке больше нет), длинная обрезается.
+      (if $sub then "\u001b[38;2;94;200;200m↳ \(if ($sub | length) > 30 then $sub[:29] + "…" else $sub end)\u001b[0m"
+       else empty end),
+      ([(.model.display_name // .model.id // empty | model), (.effort.level // empty | effort),
+        (if $ultra then rgb("175;135;255"; "ultracode") else empty end)] | join(" ")
+       | select(. != "")),
+      (.workspace.project_dir // .cwd // empty | dir),
+      (if $size > 0 then
+         "\(if $tok then bar($tok; $size) + " " else "" end)\(if $pct != null then $approx + "\(barhue($tok))\($pct | floor)%\u001b[0m " else "" end)\(if $used then $approx + ($used | k) else "—" end)/\($size | k)\(if $mark then " ⚑\($mark | k)" else "" end)"
+       else empty end),
+      (.rate_limits.five_hour | limit("5ч"; "%H:%M")),
+      (.rate_limits.seven_day | limit("7д"; "%a %H:%M")),
+      ($day | today),
+      (.rate_limits.spend_limit | limit("$"; "%d.%m"))
+    ]
+  | join(" · ")
+' <<<$view

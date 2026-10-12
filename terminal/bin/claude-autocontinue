@@ -1,0 +1,44 @@
+#!/usr/bin/env zsh
+# Ждёт ответа пользователя на совет модели (model-advisor) и, если его нет, сам пишет агенту
+# «продолжай» — чтобы работа не встала, пока человек отошёл или переключился в другую сессию.
+#
+#   claude-autocontinue <session_id> [СЕКУНДЫ]   по умолчанию 120 (2 минуты)
+#
+# Дожидается конца текущего хода, затем ждёт, не начнёт ли агент работать (человек ответил).
+# Не начал за отведённое время — отправляет «Продолжай…». Помечает сессию файлом
+# ~/.claude/session-status/<session_id>.advised: следующий промпт — ответ на совет, хук его пропускает.
+# Сам отвязывается (setsid). Журнал — ~/.config/herdr/claude-autocontinue.log.
+set -u
+
+# PATH у хоткея herdr бывает урезанным: запасные каталоги — в конец.
+path+=($HOME/.local/bin /usr/local/bin /opt/homebrew/bin)
+H=${commands[herdr]:-$HOME/.local/bin/herdr}
+LOG=$HOME/.config/herdr/claude-autocontinue.log
+
+if [[ ${1:-} != --fg ]]; then
+  [[ -n ${1:-} ]] || { print -u2 "нужен session_id"; exit 1; }
+  mkdir -p ~/.claude/session-status ${LOG:h} && : >~/.claude/session-status/${1//[^A-Za-z0-9_-]/_}.advised
+  perl -MPOSIX -e 'exit if fork; POSIX::setsid(); exec @ARGV' -- "$0" --fg "$@" </dev/null >>"$LOG" 2>&1
+  exit 0
+fi
+shift
+
+sid=$1 secs=${2:-120}
+p=${HERDR_PANE_ID:-}
+(( secs % 60 )) && wait_text="$secs с" || wait_text="$(( secs / 60 )) мин"
+log() { print -r -- "$(date '+%F %T') $*"; }
+[[ -n $p ]] || { log "не нашёл панель: вызов не из herdr"; exit 1; }
+
+$H agent wait $p --until idle --until done --timeout 600000 >/dev/null 2>&1 ||
+  { log "$p: ход не закончился за 10 минут"; exit 1; }
+if $H agent wait $p --until working --timeout $(( secs * 1000 )) >/dev/null 2>&1; then
+  log "$p: пользователь ответил на совет сам"
+  exit 0
+fi
+[[ -e ~/.claude/session-status/${sid//[^A-Za-z0-9_-]/_}.advised ]] ||
+  { log "$p: совет уже отработан"; exit 0; }
+r=$($H agent prompt $p "Продолжай: на совет по модели ответа не было $wait_text — работай на текущих настройках." 2>&1)
+case $r in
+  *'"error"'*) log "$p: «продолжай» не отправлен: $r"; exit 1 ;;
+esac
+log "$p: ответа не было ${secs} с, отправил «продолжай»"

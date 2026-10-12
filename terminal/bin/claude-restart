@@ -1,0 +1,261 @@
+#!/usr/bin/env zsh
+# Перезапускает Claude Code в панели herdr, не теряя разговор: SIGTERM процессу,
+# затем в той же панели `claude --resume <тот же id>` с прежними флагами запуска.
+# Зачем: после автообновления Claude Code голосовой ввод умирает во всех уже
+# запущенных процессах, оживляет его только свежий процесс.
+#
+#   claude-restart [PANE]      одна панель: PANE, иначе вызывающая ($HERDR_PANE_ID),
+#                              иначе та, что в фокусе UI (так работает хоткей herdr)
+#   claude-restart --focused   панель в фокусе UI, даже если вызвали из другой (хоткей)
+#   claude-restart --stale     все панели, где у claude удалён файл программы (голос мёртв)
+#   --now                      не ждать конца хода
+#   --knowledge                перед перезапуском разложить знания (/session-extract-knowledge)
+#   --prompt TEXT              после перезапуска отправить агенту этот текст
+#   --dry-run                  только показать, что было бы перезапущено
+#
+# Сам себя отвязывает от вызывающего процесса (setsid): вызов изнутри claude
+# переживает смерть этого claude. Журнал — ~/.config/herdr/claude-restart.log.
+#
+# Что переживает перезапуск (проверено 25.09.2026 на 2.1.282): задания CronCreate
+# --resume восстанавливает сам. Фоновые Bash-команды, мониторы и фоновые субагенты
+# гибнут — их список (claude-live-tasks.py) уходит новому процессу первым промптом
+# с просьбой перезапустить нужные. Будильник /loop (ScheduleWakeup) теряется —
+# скрипт сам дожидается его срока и отправляет агенту тот же промпт.
+#
+# Раскладка знаний (--knowledge) по умолчанию выключена: --resume возвращает разговор целиком,
+# терять нечего, а на тяжёлой сессии раскладка стоит минут и токенов. Знания раскладываются при
+# настоящем завершении сессии. При --stale --knowledge раскладки идут по одной (замок).
+#
+# Свои добавки машины (каналы, обёртки) — в необязательном ~/.claude/claude-restart.local.zsh
+# (или файл из CLAUDE_RESTART_LOCAL), не в этом файле. Он подключается, если есть, и может задать:
+#   restart_args PANE     — поправить массив args (флаги нового запуска) до перезапуска;
+#   restart_started PANE  — что сделать сразу после старта, до первых промптов (например,
+#                           подтвердить окно, которое Claude Code показывает при запуске: промпт,
+#                           отправленный в такое окно, пропадает).
+set -u
+
+# PATH у хоткея herdr бывает урезанным: запасные каталоги — в конец.
+path+=($HOME/.local/bin /usr/local/bin /opt/homebrew/bin /usr/sbin)
+H=${commands[herdr]:-$HOME/.local/bin/herdr}
+JQ=${commands[jq]:-jq}
+LIVE=$HOME/.claude/bin/claude-live-tasks.py
+LOG=$HOME/.config/herdr/claude-restart.log
+KLOCK=$HOME/.config/herdr/claude-restart.knowledge.lock
+LOCAL=${CLAUDE_RESTART_LOCAL:-$HOME/.claude/claude-restart.local.zsh}
+zmodload zsh/datetime
+zmodload -F zsh/stat b:zstat
+
+if [[ ${1:-} != --fg ]]; then
+  mkdir -p ${LOG:h}
+  perl -MPOSIX -e 'exit if fork; POSIX::setsid(); exec @ARGV' -- "$0" --fg "$@" </dev/null >>"$LOG" 2>&1
+  exit 0
+fi
+shift
+
+now=0 stale=0 dry=0 focused=0 knowledge=0 prompt="" pane=""
+while (( $# )); do
+  case $1 in
+    --now) now=1 ;;
+    --stale) stale=1 ;;
+    --dry-run) dry=1 ;;
+    --focused) focused=1 ;;
+    --knowledge) knowledge=1 ;;
+    --no-knowledge) knowledge=0 ;;
+    --prompt) prompt=$2; shift ;;
+    *) pane=$1 ;;
+  esac
+  shift
+done
+
+log() { print -r -- "$(date '+%F %T') $*"; }
+
+# Всплывашка в herdr: без неё ожидание конца хода выглядит как «хоткей не сработал».
+notify() { $H notification show "claude-restart: $1" ${2:+--body "$2"} --sound none >/dev/null 2>&1; }
+
+# «Мёртвый» процесс — тот, у которого файл программы удалён или подменён (обновление npm-установки).
+# На macOS у такого процесса умирает голосовой ввод: TCC не может вычислить путь к процессу и молча
+# отказывает в микрофоне. Нативный установщик старые версии не удаляет, пока ими пользуются, — там
+# процесс на старой версии не «мёртвый», а просто старый.
+is_stale() {
+  local pid=$1 info ino name
+  if [[ -e /proc/$pid/exe ]]; then   # Linux: удалённый файл помечен « (deleted)»
+    [[ $(readlink /proc/$pid/exe 2>/dev/null) == *' (deleted)' ]]
+    return
+  fi
+  info=$(lsof -a -p $pid -d txt -F in 2>/dev/null)
+  ino=$(sed -n 's/^i//p' <<<$info | head -1)
+  name=$(sed -n 's/^n//p' <<<$info | head -1)
+  [[ -n $ino ]] || return 1
+  [[ ! -e $name || $(zstat +inode -- $name) != $ino ]]
+}
+
+# npm-установка даёт процессу имя claude.exe, нативная — имя файла версии (2.1.282).
+claude_pid() {
+  $H pane process-info --pane $1 2>/dev/null |
+    $JQ -r '.result.process_info.foreground_processes[]
+      | select(.name == "claude.exe" or (.name | test("^[0-9]+[.][0-9]+[.][0-9]+$")) or .argv0 == "claude")
+      | .pid' | head -1
+}
+
+# Будильник /loop умер вместе с процессом: дождаться его срока и отправить тот же промпт —
+# ровно это и сделал бы ScheduleWakeup. Если к сроку промпт уже пришёл сам, ничего не делаем.
+rearm_wakeup() {
+  local p=$1 name=$2 sid=$3 due=$4 wprompt=$5 left
+  left=$(( due - $(date +%s) ))
+  (( left > 0 )) && sleep $left
+  $H agent wait $name --until idle --until done --timeout 3600000 >/dev/null 2>&1 ||
+    { log "$p: будильник /loop не вернул — агент занят или вышел"; return 1; }
+  [[ $($LIVE $sid 2>/dev/null | $JQ -r '.wakeup.prompt // empty') == $wprompt ]] ||
+    { log "$p: будильник /loop сработал сам, повтор не нужен"; return 0; }
+  $H agent prompt $name $wprompt >/dev/null 2>&1 && log "$p: будильник /loop возвращён" ||
+    log "$p: не удалось вернуть будильник /loop"
+}
+
+# Раскладка знаний перед перезапуском. Один промпт одной строкой (многострочный агент
+# принимает за вставку). Ждём конца хода; если агент задал вопрос — ждём ответа человека.
+sweep_knowledge() {
+  local p=$1 name=$2 st i
+  # Замок старше 40 минут — от упавшего прогона, снимаем.
+  until mkdir $KLOCK 2>/dev/null; do
+    [[ -n $(find $KLOCK -maxdepth 0 -mmin +40 2>/dev/null) ]] && rmdir $KLOCK 2>/dev/null
+    sleep 5
+  done
+  log "$p: раскладываю знания перед перезапуском"
+  $H agent prompt $name "/session-extract-knowledge Сессия сейчас перезапустится через claude-restart и продолжится с тем же разговором: разложи знания по местам, не сжимай контекст, не прощайся и не завершай работу." >/dev/null 2>&1 ||
+    { rmdir $KLOCK; log "$p: не удалось отправить раскладку знаний"; return 1; }
+  $H agent wait $name --until working --timeout 60000 >/dev/null 2>&1
+  for i in {1..120}; do
+    $H agent wait $name --until idle --until done --until blocked --timeout 1800000 >/dev/null 2>&1 || break
+    st=$($H agent get $p 2>/dev/null | $JQ -r '.result.agent.agent_status // empty')
+    [[ $st == blocked ]] || break
+    $H agent wait $name --until working --until idle --until done --timeout 1800000 >/dev/null 2>&1
+  done
+  rmdir $KLOCK
+  log "$p: знания разложены"
+}
+
+restart_one() {
+  local p=$1 info name sid pid r i state handoff wake_due wake_prompt
+  local -a args
+  info=$($H agent get $p 2>/dev/null)
+  [[ $($JQ -r '.result.agent.agent // empty' <<<$info) == claude ]] || { log "$p: не claude, пропускаю"; return 1; }
+  # У агентов, поднятых herdr при восстановлении сервера, имени нет — даём своё, как у Ctrl+Shift+T.
+  name=$($JQ -r '.result.agent.name // empty' <<<$info)
+  [[ -z $name || $name == null ]] && name="claude-${(L)${p##*:}}"
+  sid=$($JQ -r '.result.agent.agent_session.value // empty' <<<$info)
+  pid=$(claude_pid $p)
+  [[ -n $pid ]] || { log "$p: процесс claude не найден"; return 1; }
+  # Прежние флаги запуска, кроме выбора сессии: его задаём сами.
+  args=("${(@f)$($H pane process-info --pane $p | $JQ -r --argjson pid $pid '
+    .result.process_info.foreground_processes[] | select(.pid==$pid) | .argv[1:]
+    | reduce .[] as $a ({out: [], skip: false};
+        if .skip then .skip = false
+        elif ($a == "--resume" or $a == "-r" or $a == "--session-id") then .skip = true
+        elif ($a == "--continue" or $a == "-c") then .
+        else .out += [$a] end) | .out[]')}")
+  args=(${args:#})
+  # Пустая сессия (ни одного сообщения) на диск не пишется, и --resume её не найдёт.
+  local -a tr=($HOME/.claude/projects/*/$sid.jsonl(N))
+  [[ -n $sid && ${#tr} -gt 0 ]] && args+=(--resume $sid)
+  # Добавки машины: флаги правим здесь, а не функцией-обёрткой claude в шелле — herdr набирает команду
+  # в старом шелле панели, а там обёртка в том виде, в каком была при его запуске.
+  (( $+functions[restart_args] )) && restart_args $p
+
+  if (( dry )); then
+    log "$p: перезапустил бы pid $pid → claude ${args[*]}; состояние: $([[ -n $sid ]] && $LIVE $sid)"
+    return 0
+  fi
+
+  # Повторное нажатие хоткея, пока идёт перезапуск этой панели, — не второй перезапуск.
+  local plock=$HOME/.config/herdr/claude-restart.${p//:/_}.lock
+  [[ -n $(find $plock -maxdepth 0 -mmin +20 2>/dev/null) ]] && rmdir $plock 2>/dev/null
+  mkdir $plock 2>/dev/null || { log "$p: перезапуск уже идёт, повтор пропущен"; notify "Перезапуск уже идёт"; return 0; }
+  trap "rmdir $plock 2>/dev/null" EXIT
+
+  if (( ! now )); then
+    [[ $($JQ -r '.result.agent.agent_status // empty' <<<$info) == working ]] &&
+      notify "Перезапуск после конца хода" "Агент занят, claude перезапустится, когда он закончит"
+    $H agent wait $p --until idle --until done --until blocked --timeout 600000 >/dev/null 2>&1 ||
+      { log "$p: агент не освободился за 10 минут, пропускаю"; return 1; }
+    if (( knowledge )); then
+      sweep_knowledge $p $p   # до перезапуска у агента может не быть имени — адресуем по панели
+    fi
+    pid=$(claude_pid $p)
+    [[ -n $pid ]] || { log "$p: claude уже вышел"; }
+  fi
+
+  # Снимок фоновых задач и будильника /loop — до SIGTERM, потом claude пометит их остановленными.
+  state=$([[ -n $sid ]] && $LIVE $sid 2>/dev/null)
+  [[ -n $state ]] || state='{"tasks":[],"wakeup":null}'
+  # Одной строкой: многострочный текст через herdr приходит агенту как вставка, а инструкции
+  # из вставки он без явной просьбы не выполняет (проверено 25.09.2026).
+  handoff=$($JQ -r '
+    if (.tasks | length) == 0 then empty else
+      "Перезапусти фоновые задачи, которые остановил перезапуск сессии (claude-restart): "
+      + (.tasks | map(({"Monitor": "монитор", "Agent": "субагент"}[.tool] // "фоновая Bash")
+          + (if .description != "" then " «" + .description + "»" else "" end)
+          + " `" + (.command | gsub("\\s+"; " ") | .[0:160]) + "`"
+          + (if .timeout_ms then " timeout_ms=" + (.timeout_ms | tostring) else "" end)) | join("; "))
+      + ". Нужные перезапусти с теми же параметрами; разовые команды с побочными эффектами не повторяй "
+      + "вслепую — сначала проверь, что они успели сделать. Задания CronCreate восстановились сами. "
+      + "Коротко доложи, что перезапустил."
+    end' <<<$state)
+  wake_due=$($JQ -r '.wakeup.due // empty' <<<$state)
+  wake_prompt=$($JQ -r '.wakeup.prompt // empty' <<<$state)
+
+  if [[ -n $pid ]]; then
+    kill -TERM $pid 2>/dev/null
+    for i in {1..75}; do kill -0 $pid 2>/dev/null || break; sleep 0.2; done
+    kill -0 $pid 2>/dev/null && { log "$p: SIGTERM не сработал за 15 с, SIGKILL"; kill -KILL $pid; sleep 0.5; }
+  fi
+
+  # herdr замечает выход агента с задержкой: пока он не отпустил панель, start отвечает
+  # agent_name_taken, а пока шелл не готов — agent_pane_busy. Сам herdr их не повторяет.
+  for i in {1..50}; do [[ $($H agent get $p 2>&1) == *agent_not_found* ]] && break; sleep 0.2; done
+  i=0
+  while r=$($H agent start $name --kind claude --pane $p -- $args 2>&1); do
+    case $r in *agent_pane_busy*|*agent_name_taken*) (( ++i < 40 )) || break; sleep 0.25 ;; *) break ;; esac
+  done
+  case $r in
+    *'"error"'*) log "$p: не поднялся: $r"; return 1 ;;
+  esac
+  log "$p: перезапущен ($name, сессия ${sid:-новая}, было pid $pid)"
+  # Окно при запуске (например, с --dangerously-load-development-channels Claude Code каждый раз
+  # спрашивает подтверждение) съедает промпт: Enter подтверждает выбор, текст теряется (так 30.09.2026
+  # пропали список фоновых задач и будильник /loop). Подтверждать его — дело restart_started.
+  if (( $+functions[restart_started] )); then
+    restart_started $p
+  elif (( ${args[(I)--dangerously-load-development-channels]} )); then
+    log "$p: запуск с development channels, а restart_started не задан — промпты ниже могут пропасть"
+  fi
+  if [[ -n $handoff ]]; then
+    $H agent prompt $name $handoff >/dev/null 2>&1 &&
+      log "$p: передал список фоновых задач: $($JQ -c '[.tasks[].task_id]' <<<$state)" ||
+      log "$p: не удалось передать список фоновых задач"
+  fi
+  if [[ -n $wake_prompt ]]; then
+    ( rearm_wakeup $p $name $sid $wake_due $wake_prompt ) &
+    log "$p: будильник /loop вернётся в $(strftime '%H:%M:%S' $wake_due)"
+  fi
+  if [[ -n $prompt ]]; then
+    $H agent prompt $name $prompt >/dev/null 2>&1 || log "$p: не удалось отправить отложенный промпт"
+  fi
+}
+
+[[ -r $LOCAL ]] && source $LOCAL
+
+if (( stale )); then
+  panes=("${(@f)$($H agent list 2>/dev/null | $JQ -r '.result.agents[] | select(.agent=="claude") | .pane_id')}")
+  for p in ${panes:#}; do
+    pid=$(claude_pid $p)
+    [[ -n $pid ]] && is_stale $pid || continue
+    restart_one $p &
+  done
+  wait
+  exit 0
+fi
+
+(( focused )) && unset HERDR_PANE_ID
+[[ -n $pane ]] || pane=${HERDR_PANE_ID:-$($H pane current 2>/dev/null | $JQ -r '.result.pane.pane_id // empty')}
+[[ -n $pane ]] || { log "не нашёл панель"; exit 1; }
+restart_one $pane

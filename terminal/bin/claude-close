@@ -1,0 +1,69 @@
+#!/usr/bin/env zsh
+# Закрывает панель herdr с Claude Code, когда агент закончит текущий ход: SIGTERM процессу claude,
+# затем `herdr pane close`. Последняя панель вкладки закрывается вместе с вкладкой (проверено
+# 26.09.2026). Зачем: после /session-end сессия больше не нужна, возвращаться к ней незачем.
+#
+#   claude-close [PANE]   панель PANE, иначе вызывающая ($HERDR_PANE_ID)
+#   --now                 не ждать конца хода
+#
+# Сам себя отвязывает от вызывающего процесса (setsid): вызов изнутри claude переживает
+# смерть этого claude. Журнал — ~/.config/herdr/claude-close.log.
+set -u
+
+# PATH у хоткея herdr бывает урезанным: запасные каталоги — в конец.
+path+=($HOME/.local/bin /usr/local/bin /opt/homebrew/bin)
+H=${commands[herdr]:-$HOME/.local/bin/herdr}
+JQ=${commands[jq]:-jq}
+LOG=$HOME/.config/herdr/claude-close.log
+
+if [[ ${1:-} != --fg ]]; then
+  # Вне herdr и без явной панели — сразу ответ вызывающему, а не строка в журнале.
+  has_pane() { while (( $# )); do case $1 in --) return 1 ;; --resend) shift ;; -*) ;; *) return 0 ;; esac; shift; done; return 1 }
+  [[ -n ${HERDR_PANE_ID:-} ]] || has_pane "$@" ||
+    { print -u2 "не в herdr (HERDR_PANE_ID пуст): закрыть нечем — попроси владельца набрать /exit"; exit 1; }
+  mkdir -p ${LOG:h}
+  perl -MPOSIX -e 'exit if fork; POSIX::setsid(); exec @ARGV' -- "$0" --fg "$@" </dev/null >>"$LOG" 2>&1
+  exit 0
+fi
+shift
+
+now=0 p=""
+while (( $# )); do
+  case $1 in
+    --now) now=1 ;;
+    *) p=$1 ;;
+  esac
+  shift
+done
+
+log() { print -r -- "$(date '+%F %T') $*"; }
+
+[[ -n $p ]] || p=${HERDR_PANE_ID:-}
+[[ -n $p ]] || { log "не нашёл панель: вызов не из herdr"; exit 1; }
+
+# Конец хода. Если агент ждёт человека (вопрос, разрешение) — панель не закрываем, ждём ответа.
+if (( ! now )); then
+  for i in {1..60}; do
+    $H agent wait $p --until idle --until done --until blocked --timeout 1800000 >/dev/null 2>&1 ||
+      { log "$p: агент не освободился за 30 минут, не закрываю"; exit 1; }
+    [[ $($H agent get $p 2>/dev/null | $JQ -r '.result.agent.agent_status // empty') == blocked ]] || break
+    $H agent wait $p --until working --until idle --until done --timeout 1800000 >/dev/null 2>&1
+  done
+fi
+
+# npm-установка даёт процессу имя claude.exe, нативная — имя файла версии (2.1.282).
+pid=$($H pane process-info --pane $p 2>/dev/null |
+  $JQ -r '.result.process_info.foreground_processes[]
+    | select(.name == "claude.exe" or (.name | test("^[0-9]+[.][0-9]+[.][0-9]+$")) or .argv0 == "claude")
+    | .pid' | head -1)
+if [[ -n $pid ]]; then
+  kill -TERM $pid 2>/dev/null
+  for i in {1..75}; do kill -0 $pid 2>/dev/null || break; sleep 0.2; done
+  kill -0 $pid 2>/dev/null && { log "$p: SIGTERM не сработал за 15 с, SIGKILL"; kill -KILL $pid; sleep 0.5; }
+fi
+
+r=$($H pane close $p 2>&1)
+case $r in
+  *'"error"'*) log "$p: не закрылась: $r"; exit 1 ;;
+esac
+log "$p: закрыта (claude pid ${pid:-—})"

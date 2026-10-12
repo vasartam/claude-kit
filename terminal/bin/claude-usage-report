@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Расход лимитов подписки и контекста Claude Code: по дням и по сессиям.
+
+    claude-usage-report              → последние 7 дней: таблица по дням
+    claude-usage-report --days 14    → за 14 дней
+    claude-usage-report --sessions   → и под каждым днём его сессии
+    claude-usage-report --day 02.10  → один день с сессиями
+
+День — как у статусной строки: с 09:00 (час сброса недельного лимита) до 09:00 следующего, чтобы
+работа после полуночи шла в тот же день.
+
+Откуда что берётся:
+- проценты 5ч и 7д — из журнала ~/.claude/usage-log/limits.jsonl, его пишет claude-statusline при каждом
+  росте процента (с 03.10.2026). Где журнала нет, расход 7д оценивается по токенам из транскриптов и
+  помечен «~»: токены переводятся в проценты по курсу, посчитанному там, где журнал есть, а пока его мало —
+  по текущей неделе (потрачено с начала недели ÷ токены с начала недели);
+- контекст, сжатия и токены — из транскриптов ~/.claude/projects (они хранятся cleanupPeriodDays, по
+  умолчанию 30 дней). Контекст после ответа — input + cache_read + cache_creation; сжатие — запись
+  compact_boundary с размерами до и после. Сабагенты считаются в расход своей сессии, но не в её контекст.
+
+Доля сессии в 7д — её токены с весами цены модели ÷ токены дня × расход дня. Веса приблизительные
+(лимит считается не строго по цене), использование claude.ai в браузере и с других машин в транскриптах
+не видно — поэтому доли сессий тоже оценка.
+"""
+import argparse
+import collections
+import datetime as dt
+import glob
+import json
+import os
+
+LOG = os.path.expanduser('~/.claude/usage-log/limits.jsonl')
+LIMITS = os.path.expanduser('~/.claude/session-status/rate-limits.json')
+PROJECTS = os.path.expanduser('~/.claude/projects')
+# Цена токена в долях цены входного токена Opus: input, output, cache_creation, cache_read.
+WEIGHTS = {'fable': (2, 10, 2.5, 0.2), 'opus': (1, 5, 1.25, 0.1),
+           'sonnet': (0.6, 3, 0.75, 0.06), 'haiku': (0.2, 1, 0.25, 0.02)}
+WEEKDAYS = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
+
+
+def k(n):
+    return f'{n / 1e6:.1f}M'.replace('.0M', 'M') if n >= 1e6 else f'{n // 1000}k' if n >= 1000 else str(n)
+
+
+def ts_of(s):
+    return dt.datetime.fromisoformat(s.replace('Z', '+00:00')).timestamp()
+
+
+def load_log():
+    rows, seen = [], set()
+    try:
+        for line in open(LOG):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            key = (r['h5'], r['h5_reset'], r['d7'], r['d7_reset'])
+            if key not in seen:
+                seen.add(key)
+                rows.append(r)
+    except FileNotFoundError:
+        pass
+    return sorted(rows, key=lambda r: r['ts'])
+
+
+def scan(since):
+    """Ответы модели из транскриптов: [(ts, сессия, вес, контекст|None, модель)], сжатия, названия."""
+    resp, compacts, titles, seen = [], [], {}, set()
+    for f in glob.glob(f'{PROJECTS}/**/*.jsonl', recursive=True):
+        if os.path.getmtime(f) < since:
+            continue
+        sub = '/subagents/' in f
+        sid = os.path.basename(os.path.dirname(os.path.dirname(f))) if sub else os.path.basename(f)[:-6]
+        for line in open(f, errors='ignore'):
+            if '"ai-title"' in line or '"custom-title"' in line:
+                try:
+                    r = json.loads(line)
+                    titles[sid] = r.get('customTitle') or r.get('aiTitle') or titles.get(sid)
+                except ValueError:
+                    pass
+                continue
+            if '"compact_boundary"' in line and not sub:
+                try:
+                    r = json.loads(line)
+                    m = r['compactMetadata']
+                    if ts_of(r['timestamp']) >= since:
+                        compacts.append((ts_of(r['timestamp']), sid, m.get('preTokens'), m.get('postTokens'),
+                                         m.get('trigger')))
+                except (ValueError, KeyError):
+                    pass
+                continue
+            if '"usage"' not in line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            m = r.get('message') or {}
+            u = m.get('usage')
+            if not u or not r.get('timestamp') or (m.get('id'), r.get('requestId')) in seen:
+                continue
+            seen.add((m.get('id'), r.get('requestId')))
+            t = ts_of(r['timestamp'])
+            fam = next((x for x in WEIGHTS if x in m.get('model', '')), None)
+            if t < since or not fam:
+                continue
+            w = WEIGHTS[fam]
+            ctx = u.get('input_tokens', 0) + u.get('cache_read_input_tokens', 0) + u.get('cache_creation_input_tokens', 0)
+            cost = (u.get('input_tokens', 0) * w[0] + u.get('output_tokens', 0) * w[1]
+                    + u.get('cache_creation_input_tokens', 0) * w[2] + u.get('cache_read_input_tokens', 0) * w[3])
+            resp.append((t, sid, cost, None if sub or r.get('isSidechain') else ctx, fam))
+    return sorted(resp), sorted(compacts), titles
+
+
+def d7_spent(log, s, e):
+    """Рост 7д за [s, e) по журналу: (проценты, с какого момента журнал покрывает отрезок)."""
+    before = [r for r in log if r['ts'] <= s]
+    inside = [r for r in log if s < r['ts'] < e]
+    if not inside and not before:
+        return None, None
+    prev = before[-1] if before else None
+    spent = 0
+    for r in inside:
+        if prev:
+            spent += r['d7'] - prev['d7'] if r['d7_reset'] == prev['d7_reset'] else r['d7']
+        prev = r
+    return spent, s if before else inside[0]['ts']
+
+
+def main():
+    ap = argparse.ArgumentParser(description='Расход лимитов и контекста Claude Code по дням и сессиям.')
+    ap.add_argument('--days', type=int, default=7)
+    ap.add_argument('--sessions', action='store_true', help='под каждым днём — его сессии')
+    ap.add_argument('--day', help='один день, ДД.ММ, с сессиями')
+    a = ap.parse_args()
+
+    log = load_log()
+    try:
+        cur = json.load(open(LIMITS))
+    except (OSError, ValueError):
+        cur = {}
+    d7_reset = (cur.get('seven_day') or {}).get('resets_at') or (log[-1]['d7_reset'] if log else None)
+    hour = dt.datetime.fromtimestamp(d7_reset).hour if d7_reset else 9
+    now = dt.datetime.now()
+    today = (now - dt.timedelta(hours=hour)).date()
+    if a.day:
+        dd, mm = map(int, a.day.split('.'))
+        days, a.sessions = [dt.date(today.year, mm, dd)], True
+    else:
+        days = [today - dt.timedelta(days=i) for i in range(a.days - 1, -1, -1)]
+    start = lambda d: dt.datetime.combine(d, dt.time(hour)).timestamp()
+    since = min(start(days[0]), d7_reset - 7 * 86400 if d7_reset else start(days[0]))
+    resp, compacts, titles = scan(since)
+
+    # Курс «процентов 7д на единицу веса»: по журналу, где он покрывает хотя бы сутки, иначе по текущей неделе.
+    rate = None
+    if log and log[-1]['ts'] - log[0]['ts'] >= 86400:
+        spent, frm = d7_spent(log, log[0]['ts'] - 1, log[-1]['ts'] + 1)
+        w = sum(c for t, _, c, _, _ in resp if log[0]['ts'] <= t <= log[-1]['ts'])
+        rate = spent / w if w and spent else None
+    if rate is None and d7_reset and (cur.get('seven_day') or {}).get('used_percentage') is not None:
+        w = sum(c for t, _, c, _, _ in resp if t >= d7_reset - 7 * 86400)
+        rate = cur['seven_day']['used_percentage'] / w if w else None
+
+    print(f'{"день":<9} {"7д":>6} {"5ч пик":>7} {"сессий":>6} {"сжатий":>6} {"макс. ctx":>9}')
+    for d in days:
+        s, e = start(d), start(d + dt.timedelta(days=1))
+        rs = [x for x in resp if s <= x[0] < e]
+        cs = [x for x in compacts if s <= x[0] < e]
+        weight = sum(x[2] for x in rs)
+        spent, frm = d7_spent(log, s, e)
+        approx = spent is None or frm > s
+        if rate is not None:
+            spent = (spent or 0) + rate * sum(x[2] for x in rs if frm is None or x[0] < frm)
+        h5 = max((r['h5'] for r in log if s < r['ts'] < e), default=None)
+        peak = max((x[3] for x in rs if x[3]), default=0)
+        sids = {x[1] for x in rs}
+        label = f'{WEEKDAYS[d.weekday()]} {d:%d.%m}'
+        if not weight and not spent:
+            pct = '0%'
+        elif spent is None:
+            pct = '—'
+        else:
+            pct = ('~' if approx else '') + (f'{spent:.0f}%' if spent >= 1 else '<1%')
+        print(f'{label:<9} {pct:>6} {(str(h5) + "%") if h5 is not None else "—":>7} {len(sids):>6} {len(cs):>6} {k(peak) if peak else "—":>9}')
+        if not a.sessions or not rs:
+            continue
+        for sid in sorted(sids, key=lambda i: -sum(x[2] for x in rs if x[1] == i)):
+            mine = [x for x in rs if x[1] == sid]
+            ctxs = [x for x in mine if x[3]]
+            share = sum(x[2] for x in mine) / weight * spent if spent and weight else None
+            fams = collections.Counter()
+            for x in mine:
+                fams[x[4]] += x[2]
+            t0, t1 = (dt.datetime.fromtimestamp(mine[0][0]), dt.datetime.fromtimestamp(mine[-1][0]))
+            print(f'  {t0:%H:%M}–{t1:%H:%M}  {(titles.get(sid) or sid[:8])[:48]}')
+            # Доля сессии — всегда оценка: делим расход дня пропорционально токенам.
+            line = [f'7д ~{share:.1f}%' if share is not None else '7д —',
+                    '/'.join(f for f, _ in fams.most_common())]
+            if ctxs:
+                line.append(f'ctx макс. {k(max(x[3] for x in ctxs))}, в конце дня {k(ctxs[-1][3])}')
+            line += [f'сжатие {datetime_hm(c[0])} {k(c[2] or 0)}→{k(c[3] or 0)}{" авто" if c[4] == "auto" else ""}'
+                     for c in cs if c[1] == sid]
+            print('    ' + ' · '.join(line))
+    if not log:
+        print('\nЖурнала лимитов ещё нет: все проценты — оценка по токенам («~»).')
+
+
+def datetime_hm(t):
+    return dt.datetime.fromtimestamp(t).strftime('%H:%M')
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,1 @@
+{ "name": "context-compact", "version": "0.1.0", "description": "Сжимает контекст после раскладки знаний без панели herdr — по сигналу модели, как claude-compact" }

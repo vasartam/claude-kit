@@ -1,0 +1,1 @@
+{ "name": "agent-view-status", "version": "0.1.0", "description": "Передаёт статусной строке, какой агент открыт на экране, его модель и effort" }

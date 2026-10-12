@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Ребейз текущей ветки на свежую основную ветку origin: точка возврата, diff до и после,
+# по флагу — push --force-with-lease. Основная ветка — из origin/HEAD (main, master, …).
+#
+# usage: git-rebase-master [--push]
+#   --push   после успешного ребейза сразу git push --force-with-lease
+# Алиас: git config --global alias.rbm '!~/.claude/bin/git-rebase-master'  →  git rbm [--push]
+# Порядок вокруг скрипта (сверка, проверки, отчёт) — навык rebase-on-master.
+set -euo pipefail
+
+push=0
+case "${1:-}" in
+	--push) push=1 ;;
+	"") ;;
+	*) echo "usage: git-rebase-master [--push]" >&2; exit 2 ;;
+esac
+
+# "метка: значение" одной колонкой; ${#1} в bash считает символы, поэтому кириллица не ломает ширину
+row() { printf '%s:%*s%s\n' "$1" $(( 24 - ${#1} )) "" "$2"; }
+
+# Основная ветка: локальный origin/HEAD, иначе спросить у сервера
+main=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+main=${main#origin/}
+if [ -z "$main" ]; then
+	main=$(git ls-remote --symref origin HEAD 2>/dev/null \
+		| awk '$1 == "ref:" { sub("^refs/heads/", "", $2); print $2; exit }')
+fi
+if [ -z "$main" ]; then
+	echo "не знаю основную ветку origin — один раз: git remote set-head origin --auto" >&2
+	exit 1
+fi
+
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" = "$main" ] || [ "$branch" = "HEAD" ]; then
+	echo "текущая ветка — $branch, ребейзить нечего" >&2
+	exit 1
+fi
+
+before=$(git rev-parse HEAD)
+row "ветка" "$branch"
+row "точка возврата" "$before"
+row "откат" "git reset --hard $before"
+
+git fetch origin "$main"
+
+# A...B — изменения ветки от точки ответвления; после fetch точка та же, что до него
+files_before=$(git diff --shortstat "origin/$main...HEAD" | tr -d '\n' | sed 's/^ *//')
+
+if ! git rebase --autostash "origin/$main"; then
+	{
+		echo
+		echo "конфликты — разрешить объединением обеих сторон, затем: git rebase --continue"
+		echo "полный откат: git rebase --abort"
+	} >&2
+	exit 1
+fi
+
+echo
+row "база" "$(git rev-parse --short "origin/$main") (origin/$main)"
+row "HEAD" "$(git rev-parse --short HEAD)"
+row "коммитов поверх" "$(git rev-list --count "origin/$main..HEAD")"
+row "diff до ребейза" "${files_before:-—}"
+row "diff после" "$(git diff --shortstat "origin/$main...HEAD" | tr -d '\n' | sed 's/^ *//')"
+
+if [ "$push" = 1 ]; then
+	echo
+	git push --force-with-lease origin "$branch"
+fi

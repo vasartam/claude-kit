@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Моды (в слоях и в корне): что движок Claude Code кладёт при загрузке
+*/mods/*/.claude-plugin/types/
+*/mods/*/tsconfig.json
+mods/*/.claude-plugin/types/
+mods/*/tsconfig.json

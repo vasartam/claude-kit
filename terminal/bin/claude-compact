@@ -1,0 +1,133 @@
+#!/usr/bin/env zsh
+# Сжимает контекст сессии Claude Code в панели herdr, когда агент закончит текущий ход:
+# отправляет агенту `/compact` через `herdr agent prompt`. Зачем: сам агент встроенную команду
+# вызвать не может, а после /session-extract-knowledge знания уже в файлах и держать их
+# в контексте незачем.
+#
+#   claude-compact [PANE] [-- ИНСТРУКЦИЯ]   панель PANE, иначе вызывающая ($HERDR_PANE_ID);
+#                                           ИНСТРУКЦИЯ — что оставить в сводке (`/compact ИНСТРУКЦИЯ`)
+#   --now                                   не ждать конца хода
+#   --resend FILE                           после сжатия отправить агенту заново запрос пользователя из
+#                                           FILE: context-guard не даёт выполнять запрос в раздутом
+#                                           контексте, и ответ на него остаётся последним на экране
+#   --no-continue                           без --resend: после сжатия ничего не отправлять
+#
+# После сжатия агент сам ход не начинает: без продолжения сессия молчит до следующего сообщения
+# человека (02.10.2026: фоновые мониторы, остановленные на сжатие, простояли 26 минут). Поэтому без
+# --resend, если ИНСТРУКЦИЯ задана, после сжатия уходит промпт «Контекст сжат… продолжи: ИНСТРУКЦИЯ».
+# И продолжение, и --resend отправляются, только если сжатие правда прошло: в журнале сессии
+# (CLAUDE_CODE_SESSION_ID) появилась новая отметка compact_boundary. Если /compact отменил хук
+# (context-guard), ничего не отправляется — иначе повтор запроса уходит без сжатия (вид 3 петли).
+#
+# Сам себя отвязывает от вызывающего процесса (setsid): вызов изнутри claude возвращается сразу,
+# а промпт уходит после конца хода. Журнал — ~/.config/herdr/claude-compact.log.
+set -u
+
+# PATH у хоткея herdr бывает урезанным: запасные каталоги — в конец.
+path+=($HOME/.local/bin /usr/local/bin /opt/homebrew/bin)
+H=${commands[herdr]:-$HOME/.local/bin/herdr}
+JQ=${commands[jq]:-jq}
+LOG=$HOME/.config/herdr/claude-compact.log
+
+if [[ ${1:-} != --fg ]]; then
+  # Вне herdr и без явной панели — сразу ответ вызывающему, а не строка в журнале.
+  has_pane() { while (( $# )); do case $1 in --) return 1 ;; --resend) shift ;; -*) ;; *) return 0 ;; esac; shift; done; return 1 }
+  [[ -n ${HERDR_PANE_ID:-} ]] || has_pane "$@" ||
+    { print -u2 "не в herdr (HERDR_PANE_ID пуст): сжать нечем — попроси владельца набрать /compact"; exit 1; }
+  mkdir -p ${LOG:h}
+  # Второй вызов, пока первый ждёт конца хода, ничего не добавляет: иначе будет два /compact подряд.
+  lock=$HOME/.config/herdr/claude-compact.${${HERDR_PANE_ID:-}//:/_}.lock
+  [[ -n $(find $lock -maxdepth 0 -mmin +30 2>/dev/null) ]] && rmdir $lock 2>/dev/null
+  if ! mkdir $lock 2>/dev/null; then
+    print "сжатие уже запланировано, повторно вызывать не нужно"
+    exit 0
+  fi
+  perl -MPOSIX -e 'exit if fork; POSIX::setsid(); exec @ARGV' -- "$0" --fg "$@" </dev/null >>"$LOG" 2>&1
+  print "сжатие запланировано: /compact уйдёт в панель после конца хода, больше ничего вызывать не нужно"
+  exit 0
+fi
+shift
+trap 'rmdir $HOME/.config/herdr/claude-compact.${${HERDR_PANE_ID:-}//:/_}.lock 2>/dev/null' EXIT
+
+now=0 p="" focus="" resend="" cont=1
+while (( $# )); do
+  case $1 in
+    --now) now=1 ;;
+    --resend) resend=$2; shift ;;
+    --no-continue) cont=0 ;;
+    --) shift; focus="$*"; break ;;
+    *) p=$1 ;;
+  esac
+  shift
+done
+
+log() { print -r -- "$(date '+%F %T') $*"; }
+
+[[ -n $p ]] || p=${HERDR_PANE_ID:-}
+[[ -n $p ]] || { log "не нашёл панель: вызов не из herdr"; exit 1; }
+
+# Конец хода. Если агент ждёт человека (вопрос, разрешение) — ждём ответа: промпт в заблокированного
+# агента herdr всё равно отвергнет (agent_blocked).
+if (( ! now )); then
+  for i in {1..60}; do
+    $H agent wait $p --until idle --until done --until blocked --timeout 1800000 >/dev/null 2>&1 ||
+      { log "$p: агент не освободился за 30 минут, не сжимаю"; exit 1; }
+    [[ $($H agent get $p 2>/dev/null | $JQ -r '.result.agent.agent_status // empty') == blocked ]] || break
+    $H agent wait $p --until working --until idle --until done --timeout 1800000 >/dev/null 2>&1
+  done
+fi
+
+# Журнал сессии: по числу отметок compact_boundary видно, прошло ли сжатие.
+sid=${CLAUDE_CODE_SESSION_ID:-}
+transcript=( $HOME/.claude/projects/*/${sid:-none}.jsonl(N) )
+boundaries() { if [[ -n ${transcript[1]:-} ]]; then grep -c '"subtype":"compact_boundary"' $transcript[1]; else print 0; fi }
+before=$(boundaries)
+
+# Одной строкой: многострочный текст агент принимает за вставку.
+cmd="/compact${focus:+ ${focus//$'\n'/ }}"
+r=$($H agent prompt $p $cmd 2>&1)
+case $r in
+  *'"error"'*) log "$p: /compact не отправлен: $r"; exit 1 ;;
+esac
+log "$p: отправлен $cmd"
+# /compact ушёл — замок больше не нужен. Если хук отменит сжатие и раскладка снова позовёт claude-compact,
+# этот вызов должен встать в очередь, а не потеряться за «уже запланировано» (02.10 и 03.10.2026).
+rmdir $HOME/.config/herdr/claude-compact.${${HERDR_PANE_ID:-}//:/_}.lock 2>/dev/null
+
+[[ -n $resend && -s $resend ]] || resend=""
+[[ -z $resend ]] && { (( cont )) && [[ -n $focus ]] || exit 0; }
+[[ -n ${transcript[1]:-} ]] || { log "$p: журнал сессии не найден (CLAUDE_CODE_SESSION_ID=${sid:-пусто}), продолжение не отправляю"; exit 0; }
+# Сжатие идёт как ход агента (с --now — после конца текущего хода): дождаться начала и конца, затем
+# проверить, что в журнале появилась новая отметка. Нет её — /compact отменил хук.
+$H agent wait $p --until working --timeout 30000 >/dev/null 2>&1
+$H agent wait $p --until idle --until done --until blocked --timeout 900000 >/dev/null 2>&1 ||
+  { log "$p: сжатие не закончилось за 15 минут, продолжение не отправлено"; exit 1; }
+for i in {1..10}; do
+  (( $(boundaries) > before )) && break
+  sleep 2
+done
+(( $(boundaries) > before )) ||
+  { log "$p: сжатия не было (отменено хуком?), продолжение не отправлено"; exit 1; }
+
+if [[ -z $resend ]]; then
+  msg="Контекст сжат (claude-compact). Продолжи по инструкции к сжатию: ${focus//$'\n'/ }"
+  r=$($H agent prompt $p $msg 2>&1)
+  case $r in
+    *'"error"'*) log "$p: продолжение не отправлено: $r"; exit 1 ;;
+  esac
+  log "$p: отправлено продолжение после сжатия"
+  exit 0
+fi
+# Однострочный запрос — прямо в тексте, многострочный — ссылкой на файл: многострочный текст
+# агент принимает за вставку.
+req=$(<$resend)
+if [[ $req != *$'\n'* && ${#req} -le 1500 ]]; then
+  msg="Контекст сжат, знания разложены (context-guard). Выполни запрос пользователя, пришедший до сжатия: $req — и допиши последней строкой ответа строку-цитату: «> контекст сжат, знания разложены»."
+else
+  msg="Контекст сжат, знания разложены (context-guard). Выполни запрос пользователя, пришедший до сжатия, — он в файле $resend — и допиши последней строкой ответа строку-цитату: «> контекст сжат, знания разложены»."
+fi
+r=$($H agent prompt $p $msg 2>&1)
+case $r in
+  *'"error"'*) log "$p: запрос заново не отправлен: $r"; exit 1 ;;
+esac
+log "$p: запрос отправлен заново ($resend)"
