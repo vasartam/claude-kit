@@ -49,9 +49,18 @@ test('время — в поясе из настройки, с ведущими 
 
 test('часы по умолчанию — пояс системы, подпись UTC±N, без прощания', async () => {
   expect(parseClock(undefined, 180)).toEqual({ offsetMin: 180, label: 'UTC+3', farewell: undefined })
-  expect(parseClock({ utc_offset: -5, label: ' ' }, 0).label).toBe('UTC-5')
+  expect(parseClock({ utc_offset: -5, label: 42 }, 0).label).toBe('UTC-5')
   expect(parseClock({ utc_offset: 5.5 }, 0).label).toBe('UTC+5:30')
   expect(parseClock({ utc_offset: 99 }, 60).offsetMin).toBe(60)
+})
+
+test('пустая подпись — время без пояса', async () => {
+  const bare = parseClock({ utc_offset: 3, label: ' ' }, 0)
+  expect(bare.label).toBe('')
+  expect(stamp(Date.UTC(2026, 9, 12, 22, 44), bare)).toBe('13.10.2026 01:44')
+  expect(isStamp('\n\n_13.10.2026 01:44_\n', bare)).toBe(true)
+  expect(isStamp('\n\n_13.10.2026 01:44 МСК_\n', bare)).toBe(false)
+  expect(stampTailStart('Готово.\n\n_13.10.2026 01:4', bare)).toBe(7)
 })
 
 test('похожий на метку конец текста', async () => {

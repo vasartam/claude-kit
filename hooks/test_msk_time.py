@@ -110,12 +110,19 @@ class HookTest(unittest.TestCase):
         self.assertNotIn("прощание", bare.RULE)
 
     def test_clock_custom(self):
-        other = load_hook({"utc_offset": -5, "label": "", "farewell": "Пока."})
+        other = load_hook({"utc_offset": -5, "farewell": "Пока."})
         self.assertEqual(other.LABEL, "UTC-5")
         self.assertEqual(other.fmt(NOW), "03.10.2026 08:40 UTC-5")
         self.assertIsNotNone(other.parse_stamp("_03.10.2026 08:40 UTC-5_"))
         self.assertTrue(other.is_farewell("Готово.\n\nПока."))
         self.assertEqual(load_hook({"utc_offset": 5.5}).LABEL, "UTC+5:30")
+
+    def test_clock_empty_label(self):
+        bare = load_hook({"utc_offset": 3, "label": ""})
+        self.assertEqual(bare.fmt(NOW), "03.10.2026 16:40")
+        self.assertIsNotNone(bare.parse_stamp("_03.10.2026 16:40_"))
+        self.assertIsNone(bare.parse_stamp("_03.10.2026 16:40 МСК_"))
+        self.assertIn("«_ДД.ММ.ГГГГ ЧЧ:ММ_»", bare.RULE)
 
     def test_stop_quote_after_stamp(self):
         text = "Сделано.\n\n_03.10.2026 16:40 МСК_\n> контекст 420k, проверка отложена до 500k: середина правки"

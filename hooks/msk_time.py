@@ -46,13 +46,15 @@ def load_clock() -> tuple[timezone, str, str | None]:
         delta = datetime.now().astimezone().utcoffset() or timedelta(0)
     minutes = int(delta.total_seconds() // 60)
     default = f"UTC{'+' if minutes >= 0 else '-'}{abs(minutes) // 60}" + (f":{abs(minutes) % 60:02d}" if minutes % 60 else "")
-    label = clock.get("label") if isinstance(clock.get("label"), str) and clock.get("label").strip() else default
+    # "label": "" — время без подписи.
+    label = clock.get("label") if isinstance(clock.get("label"), str) else default
     farewell = clock.get("farewell") if isinstance(clock.get("farewell"), str) and clock.get("farewell").strip() else None
     return timezone(delta), label.strip(), farewell.strip() if farewell else None
 
 
 TZ, LABEL, FAREWELL = load_clock()
-STAMP_RE = re.compile(r"_(\d{2})\.(\d{2})\.(\d{4}) (\d{2}):(\d{2}) " + re.escape(LABEL) + "_")
+TAIL = f" {LABEL}" if LABEL else ""  # подпись после времени; пустая — ничего
+STAMP_RE = re.compile(r"_(\d{2})\.(\d{2})\.(\d{4}) (\d{2}):(\d{2})" + re.escape(TAIL) + "_")
 # Отметка верна, если отстаёт от момента остановки не больше чем на 4 мин и не опережает его.
 LAG = timedelta(minutes=4)
 AHEAD = timedelta(minutes=1)
@@ -64,7 +66,7 @@ STATE_DIR = CLAUDE_DIR / "msk-time"
 KEEP = timedelta(days=60)
 
 RULE = (
-    f"Последняя строка итогового ответа владельцу — отметка курсивом «_ДД.ММ.ГГГГ ЧЧ:ММ {LABEL}_» "
+    f"Последняя строка итогового ответа владельцу — отметка курсивом «_ДД.ММ.ГГГГ ЧЧ:ММ{TAIL}_» "
     "по самому свежему «Сейчас …» из таких заметок (после инструментов они обновляются); "
     "время не выдумывать. Промежуточный текст между вызовами инструментов"
     + (f" и прощание «{FAREWELL}»" if FAREWELL else "") + " — без отметки."
@@ -76,7 +78,7 @@ RULE_MOD = (
 
 
 def fmt(dt: datetime) -> str:
-    return f"{dt.astimezone(TZ):%d.%m.%Y %H:%M} {LABEL}"
+    return f"{dt.astimezone(TZ):%d.%m.%Y %H:%M}{TAIL}"
 
 
 def stamp(dt: datetime) -> str:

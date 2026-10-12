@@ -1,10 +1,14 @@
 // Время для строки ответа: «04.10.2026 00:30 МСК». Пояс, подпись и прощание — ключ "clock" в
 // <claude>/claude-kit.json, как у хука hooks/msk_time.py: {"utc_offset": 3, "label": "МСК", "farewell": "Пока."}.
-// По умолчанию — пояс системы, подпись «UTC+N», прощания нет. Пояс — постоянное смещение, без летнего времени.
+// По умолчанию — пояс системы, подпись «UTC+N», прощания нет; "label": "" — время без подписи. Пояс —
+// постоянное смещение, без летнего времени.
 
 export type Clock = { offsetMin: number; label: string; farewell?: string }
 
 const pad = (n: number) => String(n).padStart(2, '0')
+
+// Подпись после времени с пробелом перед ней; пустая подпись — ничего.
+const tail = (clock: Clock) => (clock.label ? ` ${clock.label}` : '')
 
 function offsetLabel(min: number): string {
   const a = Math.abs(min)
@@ -16,7 +20,7 @@ export function parseClock(raw: unknown, localOffsetMin: number): Clock {
   const c = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const h = c.utc_offset
   const offsetMin = typeof h === 'number' && h >= -14 && h <= 14 ? Math.round(h * 60) : localOffsetMin
-  const label = typeof c.label === 'string' && c.label.trim() ? c.label.trim() : offsetLabel(offsetMin)
+  const label = typeof c.label === 'string' ? c.label.trim() : offsetLabel(offsetMin)
   const farewell = typeof c.farewell === 'string' && c.farewell.trim() ? c.farewell.trim() : undefined
   return { offsetMin, label, farewell }
 }
@@ -24,7 +28,7 @@ export function parseClock(raw: unknown, localOffsetMin: number): Clock {
 export function stamp(ms: number, clock: Clock): string {
   const d = new Date(ms + clock.offsetMin * 60000)
   const day = `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`
-  return `${day} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} ${clock.label}`
+  return `${day} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}${tail(clock)}`
 }
 
 // Ответ кончается словом прощания (так кончается сессия) — метка не нужна.
@@ -36,7 +40,7 @@ export function isFarewell(text: string, clock: Clock): boolean {
 
 // Метку модель иногда пишет и сама, подражая меткам мода в прошлых ответах (04.10.2026 после сжатия:
 // две метки подряд, своя — с неверной минутой). Шаблон её строки, D — цифра.
-const template = (clock: Clock) => `_DD.DD.DDDD DD:DD ${clock.label}_`
+const template = (clock: Clock) => `_DD.DD.DDDD DD:DD${tail(clock)}_`
 
 // s — начало строки метки или целая метка с пробелами после.
 function fits(s: string, tpl: string): boolean {
