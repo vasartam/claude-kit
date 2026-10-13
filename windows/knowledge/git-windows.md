@@ -7,7 +7,12 @@
   всегда), вызывать по полному пути; токен — в keyring Windows. Путь проекта с `%2F` из
   PowerShell молча возвращает пустой список — брать числовой id.
 - **Коммит** — Windows-git (identity владельца уже в глобальном конфиге). `core.autocrlf=true`,
-  поэтому в каждом репозитории `.gitattributes` с `* text=auto eol=lf`.
+  поэтому в каждом репозитории `.gitattributes` с `* text=auto eol=lf`. В WSL `autocrlf=true`
+  тоже: без `.gitattributes` `pull` из WSL переписал `.sh` на CRLF, и bash упал на
+  `set: pipefail` с `\r` на конце (13.10.2026). WSL-git на `/mnt/d` к тому же видит слетевший
+  бит исполнения как правку и не даёт `pull` — в такой копии `git config core.fileMode false`.
+- **`error: <файл>: does not match index`** у Windows-git после работы WSL-git с той же копией —
+  устаревший кэш stat: `git update-index -q --refresh`, затем повторить.
 - **Push — только из WSL** (ключ GitLab только там):
   `MSYS_NO_PATHCONV=1 wsl.exe -d Debian -e sh -c 'cd /mnt/d/dev/<проект> && git -c safe.directory=/mnt/d/dev/<проект> push origin main'`.
   Другой путь — Windows-git с транспортом из WSL: `GIT_SSH_COMMAND="wsl -d Debian -- ssh" git push`.
