@@ -133,8 +133,8 @@ class AdvisorTest(unittest.TestCase):
         ctx = self.line()
         self.assertNotIn("wait:", ctx)
         self.assertNotIn("Совет", ctx)
-        self.assertTrue(ctx.endswith("knowledge/model-advice.md. Вкладка herdr: «Моя задача»; задача сменилась — "
-                                     "переименовать (правила слоя terminal)."), ctx)
+        self.assertTrue(ctx.endswith("knowledge/model-advice.md. Вкладка herdr: «Моя задача» — менять только "
+                                     "при смене основной задачи (правила слоя terminal)."), ctx)
         self.assertEqual(self.s.herdr_calls(), ["tab get t1"])
 
     @unittest.skipUnless(POSIX, "фальшивый herdr — скрипт sh")
