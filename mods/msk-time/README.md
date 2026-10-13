@@ -29,6 +29,7 @@
 
 ## Тесты
 
-`claude plugin test` на копии каталога (движок кладёт в мод `types/` и `tsconfig.json`):
+`claude plugin test` на копии каталога (движок кладёт в мод `types/` и `tsconfig.json`) — бинарём
+приложения, `claude` в PATH может быть без `plugin test` (`desktop/knowledge/claude-desktop.md`):
 `cp -R mods/msk-time /tmp/m && claude plugin test /tmp/m`. Пути в тестах сравниваются без диска и
 обратных слэшей: на Windows движок отдаёт `C:\home\u\…`.
