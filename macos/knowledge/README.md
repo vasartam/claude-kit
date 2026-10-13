@@ -13,5 +13,6 @@
 | [python-https-curl.md](python-https-curl.md) | Python с python.org не видит keychain → CERTIFICATE_VERIFY_FAILED; HTTPS через системный curl, пакетный режим, скачивание во временное имя | перед питоновским кодом, который ходит по HTTPS на Mac |
 | [keychain.md](keychain.md) | security find/add-generic-password без печати секрета; OAuth MCP в записи «Claude Code-credentials» и лечение «invalid_client: unknown client_id» | при работе со связкой ключей, сбое входа в MCP с OAuth |
 | [chrome-cookies.md](chrome-cookies.md) | расшифровка кук Chrome на macOS (Keychain → PBKDF2 → AES-CBC, 32 байта хеша домена), копия базы, суффиксы домена, ненайденное в .env затирать | когда нужна HttpOnly-сессия из браузера владельца |
+| [safari-tab-groups.md](safari-tab-groups.md) | группы вкладок Safari: прочитать из SafariTabs.db, создать через меню и буфер, вкладки — AppleScript | когда нужно завести или найти группу вкладок |
 | [cloud-uploads.md](cloud-uploads.md) | большие заливки: лимит полосы по расписанию, один поток, caffeinate, части по 2 ГБ с SHA256SUMS, rclone check до удаления; rclone и облако Mail.ru — три грабли и WebDAV | перед выгрузкой больших объёмов в облако |
 | [uv-cache.md](uv-cache.md) | ~/.cache/uv пухнет от uvx-MCP: uv cache prune --force, лок живых процессов, хардлинков нет | при нехватке места на диске, чистке кэшей |
