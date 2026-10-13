@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # Сжимает контекст сессии Claude Code в панели herdr, когда агент закончит текущий ход:
-# отправляет агенту `/compact` через `herdr agent prompt`. Зачем: сам агент встроенную команду
+# отправляет агенту `/compact` через `claude-prompt` (`herdr agent prompt`, не задевая черновик владельца). Зачем: сам агент встроенную команду
 # вызвать не может, а после /session-extract-knowledge знания уже в файлах и держать их
 # в контексте незачем.
 #
@@ -26,6 +26,8 @@ set -u
 # PATH у хоткея herdr бывает урезанным: запасные каталоги — в конец.
 path+=($HOME/.local/bin /usr/local/bin /opt/homebrew/bin)
 H=${commands[herdr]:-$HOME/.local/bin/herdr}
+# Промпты — через claude-prompt: он прячет недописанный черновик владельца, а не дописывает в него.
+CP=$HOME/.claude/bin/claude-prompt
 JQ=${commands[jq]:-jq}
 LOG=$HOME/.config/herdr/claude-compact.log
 
@@ -85,7 +87,7 @@ before=$(boundaries)
 
 # Одной строкой: многострочный текст агент принимает за вставку.
 cmd="/compact${focus:+ ${focus//$'\n'/ }}"
-r=$($H agent prompt $p $cmd 2>&1)
+r=$($CP $p $cmd 2>&1)
 case $r in
   *'"error"'*) log "$p: /compact не отправлен: $r"; exit 1 ;;
 esac
@@ -111,7 +113,7 @@ done
 
 if [[ -z $resend ]]; then
   msg="Контекст сжат (claude-compact). Продолжи по инструкции к сжатию: ${focus//$'\n'/ }"
-  r=$($H agent prompt $p $msg 2>&1)
+  r=$($CP $p $msg 2>&1)
   case $r in
     *'"error"'*) log "$p: продолжение не отправлено: $r"; exit 1 ;;
   esac
@@ -126,7 +128,7 @@ if [[ $req != *$'\n'* && ${#req} -le 1500 ]]; then
 else
   msg="Контекст сжат, знания разложены (context-guard). Выполни запрос пользователя, пришедший до сжатия, — он в файле $resend — и допиши последней строкой ответа строку-цитату: «> контекст сжат, знания разложены»."
 fi
-r=$($H agent prompt $p $msg 2>&1)
+r=$($CP $p $msg 2>&1)
 case $r in
   *'"error"'*) log "$p: запрос заново не отправлен: $r"; exit 1 ;;
 esac

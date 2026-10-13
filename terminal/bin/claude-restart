@@ -37,6 +37,8 @@ set -u
 # PATH у хоткея herdr бывает урезанным: запасные каталоги — в конец.
 path+=($HOME/.local/bin /usr/local/bin /opt/homebrew/bin /usr/sbin)
 H=${commands[herdr]:-$HOME/.local/bin/herdr}
+# Промпты — через claude-prompt: он прячет недописанный черновик владельца, а не дописывает в него.
+CP=$HOME/.claude/bin/claude-prompt
 JQ=${commands[jq]:-jq}
 LIVE=$HOME/.claude/bin/claude-live-tasks.py
 LOG=$HOME/.config/herdr/claude-restart.log
@@ -107,7 +109,7 @@ rearm_wakeup() {
     { log "$p: будильник /loop не вернул — агент занят или вышел"; return 1; }
   [[ $($LIVE $sid 2>/dev/null | $JQ -r '.wakeup.prompt // empty') == $wprompt ]] ||
     { log "$p: будильник /loop сработал сам, повтор не нужен"; return 0; }
-  $H agent prompt $name $wprompt >/dev/null 2>&1 && log "$p: будильник /loop возвращён" ||
+  $CP $name $wprompt >/dev/null 2>&1 && log "$p: будильник /loop возвращён" ||
     log "$p: не удалось вернуть будильник /loop"
 }
 
@@ -121,7 +123,7 @@ sweep_knowledge() {
     sleep 5
   done
   log "$p: раскладываю знания перед перезапуском"
-  $H agent prompt $name "/session-extract-knowledge Сессия сейчас перезапустится через claude-restart и продолжится с тем же разговором: разложи знания по местам, не сжимай контекст, не прощайся и не завершай работу." >/dev/null 2>&1 ||
+  $CP $name "/session-extract-knowledge Сессия сейчас перезапустится через claude-restart и продолжится с тем же разговором: разложи знания по местам, не сжимай контекст, не прощайся и не завершай работу." >/dev/null 2>&1 ||
     { rmdir $KLOCK; log "$p: не удалось отправить раскладку знаний"; return 1; }
   $H agent wait $name --until working --timeout 60000 >/dev/null 2>&1
   for i in {1..120}; do
@@ -229,7 +231,7 @@ restart_one() {
     log "$p: запуск с development channels, а restart_started не задан — промпты ниже могут пропасть"
   fi
   if [[ -n $handoff ]]; then
-    $H agent prompt $name $handoff >/dev/null 2>&1 &&
+    $CP $name $handoff >/dev/null 2>&1 &&
       log "$p: передал список фоновых задач: $($JQ -c '[.tasks[].task_id]' <<<$state)" ||
       log "$p: не удалось передать список фоновых задач"
   fi
@@ -238,7 +240,7 @@ restart_one() {
     log "$p: будильник /loop вернётся в $(strftime '%H:%M:%S' $wake_due)"
   fi
   if [[ -n $prompt ]]; then
-    $H agent prompt $name $prompt >/dev/null 2>&1 || log "$p: не удалось отправить отложенный промпт"
+    $CP $name $prompt >/dev/null 2>&1 || log "$p: не удалось отправить отложенный промпт"
   fi
 }
 

@@ -675,6 +675,19 @@ class HerdrTest(Base):
         self.assertIsNone(st["pending"])
         self.assertIsNotNone(st["extract_pending_at"])
 
+    def test_extraction_goes_through_claude_prompt(self):
+        """Есть claude-prompt слоя terminal — промпт через него: он прячет недописанный черновик владельца."""
+        s = self.s
+        tool = s.tmp / ".claude" / "bin" / "claude-prompt"
+        tool.parent.mkdir(parents=True, exist_ok=True)
+        tool.write_text("#!/bin/sh\necho claude-prompt \"$@\" >> \"$HERDR_LOG\"\n", encoding="utf-8")
+        tool.chmod(0o755)
+        self.started(350_000)
+        s.compact()
+        calls = s.herdr_calls(wait_for=2)
+        self.assertEqual(calls[0], "agent wait p1 --until idle --until done --timeout 1800000")
+        self.assertTrue(calls[1].startswith("claude-prompt p1 /session-extract-knowledge "), calls[1])
+
     def test_rewake_exits_at_once(self):
         s = self.s
         s.env["CONTEXT_GUARD_REWAKE_DELAY"] = "5"

@@ -13,6 +13,8 @@ set -u
 # PATH у хоткея herdr бывает урезанным: запасные каталоги — в конец.
 path+=($HOME/.local/bin /usr/local/bin /opt/homebrew/bin)
 H=${commands[herdr]:-$HOME/.local/bin/herdr}
+# Промпты — через claude-prompt: он прячет недописанный черновик владельца, а не дописывает в него.
+CP=$HOME/.claude/bin/claude-prompt
 LOG=$HOME/.config/herdr/claude-autocontinue.log
 
 if [[ ${1:-} != --fg ]]; then
@@ -37,7 +39,7 @@ if $H agent wait $p --until working --timeout $(( secs * 1000 )) >/dev/null 2>&1
 fi
 [[ -e ~/.claude/session-status/${sid//[^A-Za-z0-9_-]/_}.advised ]] ||
   { log "$p: совет уже отработан"; exit 0; }
-r=$($H agent prompt $p "Продолжай: на совет по модели ответа не было $wait_text — работай на текущих настройках." 2>&1)
+r=$($CP $p "Продолжай: на совет по модели ответа не было $wait_text — работай на текущих настройках." 2>&1)
 case $r in
   *'"error"'*) log "$p: «продолжай» не отправлен: $r"; exit 1 ;;
 esac

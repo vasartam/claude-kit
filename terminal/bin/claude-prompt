@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Отправить промпт агенту Claude Code в панели herdr, не задев черновик владельца.
+
+    claude-prompt TARGET TEXT    то же, что `herdr agent prompt TARGET TEXT` (панель или имя агента):
+                                 тот же вывод и код выхода
+
+`herdr agent prompt` впечатывает текст в поле ввода и жмёт Enter. Если владелец в это время набирает
+промпт и ещё не отправил его, текст утилиты дописывается в конец черновика и уходит вместе с ним
+(13.10.2026: недописанный промпт владельца + `/session-extract-knowledge …` одним сообщением, и
+слэш-команда не в начале уже не команда). Поэтому перед отправкой:
+
+1. читает поле ввода с экрана панели (`herdr pane read --format ansi`); подсказка пустого поля
+   («Try …») — тусклый текст, она за черновик не считается;
+2. черновик есть — ждёт, пока владелец перестанет печатать (поле не меняется STABLE с), и прячет
+   черновик в stash Claude Code (Ctrl+S); после отправки Claude Code возвращает его в поле сам;
+3. отправляет TEXT через `herdr agent prompt`. Сорвалась отправка — повторный Ctrl+S на пустом поле
+   возвращает черновик.
+
+Поле не нашлось на экране (диалог, не Claude Code) — отправляет как раньше. Агент ждёт человека
+(blocked) — не прячет: herdr такой промпт всё равно отвергнет.
+"""
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERDR = shutil.which("herdr") or str(Path.home() / ".local" / "bin" / "herdr")
+STABLE = 2.0          # сек без изменений в поле — владелец не печатает
+TYPING_MAX = 300      # дольше ждать конца набора не будем: прячем как есть
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+DIM = re.compile(r"\x1b\[2m.*?\x1b\[(?:0|22)?m")
+
+
+def herdr(*args, timeout=15):
+    return subprocess.run([HERDR, *args], capture_output=True, text=True, timeout=timeout)
+
+
+def is_rule(plain):
+    s = plain.strip()
+    return len(s) >= 20 and s.count("─") >= 0.8 * len(s)
+
+
+def draft(pane):
+    """Текст в поле ввода; "" — поле пустое; None — поля на экране нет."""
+    try:
+        r = herdr("pane", "read", pane, "--source", "visible", "--format", "ansi")
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode:
+        return None
+    lines = r.stdout.splitlines()
+    plain = [ANSI.sub("", l) for l in lines]
+    rules = [i for i, l in enumerate(plain) if is_rule(l)]
+    # Поле — между двумя соседними линейками, первая строка начинается с «❯» (или «!» в режиме bash).
+    for a, b in reversed(list(zip(rules, rules[1:]))):
+        if b - a > 1 and plain[a + 1].lstrip()[:1] in ("❯", "!"):
+            body = [ANSI.sub("", DIM.sub("", l)) for l in lines[a + 1:b]]
+            body[0] = body[0].lstrip()[1:]
+            return "\n".join(l.rstrip() for l in body).strip()
+    return None
+
+
+def agent(target):
+    """(панель, статус) агента: цель бывает и именем агента (claude-restart), а читать надо панель."""
+    try:
+        a = json.loads(herdr("agent", "get", target).stdout)["result"]["agent"]
+        return a.get("pane_id") or target, a.get("agent_status") or ""
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+        return target, ""
+
+
+def stash(pane):
+    herdr("pane", "send-keys", pane, "ctrl+s")
+    time.sleep(0.4)
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(__doc__.split("\n\n")[1], file=sys.stderr)
+        return 2
+    target, text = sys.argv[1:]
+    pane, st = agent(target)
+    stashed = False
+    cur = draft(pane)
+    if cur and st != "blocked":
+        deadline = time.time() + TYPING_MAX
+        while time.time() < deadline:
+            time.sleep(STABLE)
+            nxt = draft(pane)
+            if nxt == cur:
+                break
+            cur = nxt
+            if not cur:
+                break
+        if cur:
+            stash(pane)
+            stashed = draft(pane) == ""
+    r = subprocess.run([HERDR, "agent", "prompt", target, text], capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    if stashed and (r.returncode or '"error"' in r.stdout):
+        stash(pane)  # Ctrl+S на пустом поле возвращает спрятанное
+    return r.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

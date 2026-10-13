@@ -547,13 +547,17 @@ def precompact_herdr(inp, st, m, left):
 
 
 def queue_extraction(pane, msg):
-    """Промпт агенту в панель herdr после конца хода: процесс отвязан и переживает хук."""
+    """Промпт агенту в панель herdr после конца хода: процесс отвязан и переживает хук. Шлёт через
+    claude-prompt слоя terminal, если он есть: тот прячет недописанный черновик владельца, иначе
+    промпт дописался бы в его конец."""
     herdr = shutil.which("herdr") or str(Path.home() / ".local" / "bin" / "herdr")
+    send = Path.home() / ".claude" / "bin" / "claude-prompt"
+    send = [str(send)] if os.access(send, os.X_OK) else [herdr, "agent", "prompt"]
     try:
         subprocess.Popen(
             ["/bin/sh", "-c",
              'sleep 1; "$0" agent wait "$1" --until idle --until done --timeout 1800000 >/dev/null 2>&1 '
-             '&& "$0" agent prompt "$1" "$2" >/dev/null 2>&1', herdr, pane, msg],
+             '&& shift && "$@" >/dev/null 2>&1', herdr, pane, *send, pane, msg],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True)
     except (OSError, ValueError):

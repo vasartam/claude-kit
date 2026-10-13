@@ -33,9 +33,10 @@ echo "$now" >>"$log"
 
 pane="$HERDR_PANE_ID"
 (
+  # claude-prompt прячет недописанный черновик владельца, а не дописывает в него.
   "$herdr" agent wait "$pane" --until idle --until done --timeout 60000 >/dev/null 2>&1
   sleep "$DELAY"
-  "$herdr" agent prompt "$pane" "$PROMPT" >/dev/null 2>&1
+  "$HOME/.claude/bin/claude-prompt" "$pane" "$PROMPT" >/dev/null 2>&1
 ) </dev/null >/dev/null 2>&1 &
 disown 2>/dev/null
 exit 0
