@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px system-ui, sans-serif; margin: 12px; width: 280px; color: #222; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    ul { list-style: none; padding: 0; margin: 0 0 10px; }
+    li { padding: 3px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+    .busy { color: #b26b00; }
+    button { width: 100%; padding: 6px; font: inherit; cursor: pointer; }
+    p { margin: 8px 0 0; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Группы «Claude»</h1>
+  <ul id="list"></ul>
+  <button id="close">Закрыть все, кроме текущей</button>
+  <p id="note"></p>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

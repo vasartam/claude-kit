@@ -102,6 +102,7 @@ claude-kit/
   mods/session-state/      мод: контекст, порог автосжатия, лимиты, модель и effort сессии — файлом для хуков
   mods/msk-time/           мод: время в конец ответа дописывает программа, а не модель
   mods/context-compact/    мод: сжатие после раскладки без панели herdr — сигналом модели, как claude-compact
+  chrome/claude-groups-cleaner/  расширение Chrome: закрывает брошенные группы вкладок «Claude» (ставится вручную, README)
   bin/                     утилиты (link.py ставит ссылки в ~/.claude/bin, кроме Windows):
                            automode-add-rule — правило в autoMode.allow (запускает владелец);
                            git-rebase-master — ребейз на основную ветку из origin/HEAD (алиас git rbm)

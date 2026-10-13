@@ -31,7 +31,7 @@
 | [claude-code-context.md](claude-code-context.md) | заполнение контекста, автосжатие, транскрипт, цена старта | при подсчёте контекста |
 | [claude-code-permissions.md](claude-code-permissions.md) | `permissions`, классификатор auto mode, `autoMode.allow` | отказ классификатора, нужны права |
 | [claude-code-headless.md](claude-code-headless.md) | `claude -p`: вложенный запуск, детерминированный прогон | инструмент зовёт модель |
-| [claude-in-chrome.md](claude-in-chrome.md) | «not connected», группа вкладок, ввод, нативный select | перед работой в браузере |
+| [claude-in-chrome.md](claude-in-chrome.md) | «not connected», группа вкладок и уборщик групп, ввод, нативный select | перед работой в браузере |
 | [claude-in-chrome-data.md](claude-in-chrome-data.md) | `[BLOCKED]`, localStorage и токены, fetch на localhost, таймеры вкладки | забираешь данные со страницы |
 | [claude-models.md](claude-models.md) | лимиты тарифа, модель и effort под задачу, кэш и цены | при выборе модели, на исходе лимита |
 | [model-advice.md](model-advice.md) | совет по модели и effort: строка хука `model-advisor`, когда молчать, лимиты и норма недели | строка `model-advisor` к промпту, задача сменилась |
