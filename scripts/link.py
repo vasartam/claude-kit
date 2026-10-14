@@ -13,7 +13,8 @@ python scripts/link.py --uninstall             — убрать всё, что �
   skills/<имя>/    навыки — ссылка ~/.claude/skills/<имя> (symlink, на Windows junction);
   hooks/hooks.json хуки в формате плагина Claude Code (${CLAUDE_PLUGIN_ROOT} — каталог слоя) —
                    записи в ~/.claude/settings.json: exec-форма, абсолютные пути, python3 — тот
-                   же python, что запустил link.py; на Windows хуки на bash пропускаются;
+                   же python, что запустил link.py, node — найденный на PATH (нет node — тот же
+                   хук <имя>.py рядом, пока он есть); на Windows хуки на bash пропускаются;
   mods/<имя>/      моды (function hooks; нужен .claude-plugin/plugin.json) — каталог в
                    env.CLAUDE_CODE_PLUGIN_DIRS файла settings.json, разделитель — как у PATH ОС;
   bin/<файл>       утилиты — ссылка ~/.claude/bin/<файл> (кроме Windows);
@@ -34,6 +35,7 @@ exclude — имена навыков, утилит, команд (без .md), 
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -266,6 +268,18 @@ def exec_form(command, layer):
     parts = [p.replace("${CLAUDE_PLUGIN_ROOT}", root) for p in shlex.split(command)]
     if parts[0] in ("python3", "python"):
         parts[0] = sys.executable
+    elif parts[0] == "node":
+        node = shutil.which("node")
+        if node:
+            parts[0] = node
+            return parts
+        # Переходное, пока хуки переезжают на Node: без node — тот же хук на Python рядом, если он ещё есть.
+        script = next((i for i, p in enumerate(parts) if p.endswith(".mjs")), None)
+        if script is None or not Path(parts[script][:-4] + ".py").is_file():
+            return None
+        print(f"Нет node — хук «{Path(parts[script]).stem}» подключён на Python")
+        parts[script] = parts[script][:-4] + ".py"
+        parts[0] = sys.executable
     elif parts[0] in ("bash", "sh") or parts[0].endswith(".sh"):
         if WINDOWS:
             return None
@@ -302,7 +316,8 @@ def wanted_hooks(dirs, exclude):
                 continue
             parts = exec_form(hook["command"], layer)
             if parts is None:
-                print(f"Пропущен хук {event} «{name}»: bash на Windows не запускается")
+                why = "нет node" if shlex.split(hook["command"])[0] == "node" else "bash на Windows не запускается"
+                print(f"Пропущен хук {event} «{name}»: {why}")
                 continue
             extra = {k: v for k, v in hook.items() if k not in ("type", "command", "args")}
             entry = {"type": "command", "command": parts[0], "args": parts[1:], **extra}

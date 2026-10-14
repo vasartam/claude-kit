@@ -154,6 +154,43 @@ class LinkTest(unittest.TestCase):
         self.assertEqual(len(settings["hooks"]["Stop"]), 2)
         self.assertTrue(foreign_skill.is_dir() and not foreign_skill.is_symlink())
 
+    def node_hook_kit(self, with_python):
+        """Хук слоя на node; with_python — рядом лежит прежний <имя>.py."""
+        write(self.kit.root / "hooks" / "guard.mjs", "")
+        if with_python:
+            write(self.kit.root / "hooks" / "guard.py", "")
+        write(self.kit.root / "hooks" / "hooks.json", json.dumps({"hooks": {"PreCompact": [{"hooks": [
+            {"type": "command", "command": 'node "${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs" rewake',
+             "timeout": 30}]}]}}))
+
+    @unittest.skipIf(sys.platform == "win32", "поддельный node — shell-скрипт")
+    def test_node_hook_gets_node_from_path(self):
+        self.node_hook_kit(with_python=True)
+        fake = write(Path(self.tmp) / "fakebin" / "node", "#!/bin/sh\n")
+        fake.chmod(0o755)
+        self.kit.env["PATH"] = str(fake.parent)
+        self.kit.run("--init", "desktop")
+        hook = self.kit.settings()["hooks"]["PreCompact"][0]["hooks"][0]
+        self.assertEqual(hook["command"], str(fake))
+        self.assertEqual(hook["args"], [(self.kit.root / "hooks" / "guard.mjs").as_posix(), "rewake"])
+        self.assertEqual(hook["timeout"], 30)
+
+    def test_no_node_falls_back_to_python_sibling(self):
+        self.node_hook_kit(with_python=True)
+        self.kit.env["PATH"] = str(Path(self.tmp) / "empty")
+        out = self.kit.run("--init", "desktop")
+        self.assertIn("Нет node — хук «guard» подключён на Python", out)
+        hook = self.kit.settings()["hooks"]["PreCompact"][0]["hooks"][0]
+        self.assertEqual(hook["command"], sys.executable)
+        self.assertEqual(hook["args"], [(self.kit.root / "hooks" / "guard.py").as_posix(), "rewake"])
+
+    def test_no_node_and_no_python_sibling_skips(self):
+        self.node_hook_kit(with_python=False)
+        self.kit.env["PATH"] = str(Path(self.tmp) / "empty")
+        out = self.kit.run("--init", "desktop")
+        self.assertIn("Пропущен хук PreCompact «guard»: нет node", out)
+        self.assertNotIn("PreCompact", self.kit.settings().get("hooks", {}))
+
     def test_switch_layers_removes_stale(self):
         self.kit.run("--init", "terminal")
         self.kit.run("--init", "desktop")
