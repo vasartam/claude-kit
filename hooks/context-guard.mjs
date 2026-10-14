@@ -2,6 +2,8 @@
 // context-guard: знания раскладываются по местам до того, как сжатие контекста их сотрёт.
 // Перенос hooks/context-guard.py на Node с тем же поведением (Python-версия — эталон и запасной путь
 // без Node). Описание — DOC ниже, его же печатает запуск с неверными аргументами; разбор — hooks/README.md.
+// Не перехватить изнутри, это забота запускающего: Node старше 18 (Node 12 падает ещё на разборе файла;
+// scripts/link.py такой не берёт) и NODE_OPTIONS с --require/--import — они выполняются до модуля.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -74,9 +76,14 @@ try {
 } catch { // набор повреждён: хук молча пропускает работу, падать нельзя
   process.exit(0);
 }
-const { claude_dir, cleanup_status, emit_context, emit_json, entries_backwards, note_compact, parse_tokens,
-  read_input, safe_sid, session_state, status_dir, write_json, PY_S, _ascii_digits, _floordiv, _get, _home,
-  _is_dict, _mtime, _or, _py_int, _py_str, _py_str_repr, _sleep, _time, _truthy, _well_formed, _write_all } = ss;
+// Имени нет (модуль другой версии) — как ImportError у Python: тот же тихий выход, а не undefined дальше.
+const gone = () => process.exit(0);
+const { claude_dir = gone(), cleanup_status = gone(), emit_context = gone(), emit_json = gone(),
+  entries_backwards = gone(), note_compact = gone(), parse_tokens = gone(), read_input = gone(), safe_sid = gone(),
+  session_state = gone(), status_dir = gone(), write_json = gone(), PY_S = gone(), _ascii_digits = gone(),
+  _floordiv = gone(), _get = gone(), _home = gone(), _is_dict = gone(), _mtime = gone(), _or = gone(),
+  _py_int = gone(), _py_str = gone(), _py_str_repr = gone(), _sleep = gone(), _time = gone(), _truthy = gone(),
+  _well_formed = gone(), _write_all = gone() } = ss;
 
 // --- Python-семантика ----------------------------------------------------------------------------
 // re Python: \s, \w и \b юникодные, у RegExp — нет. \s — PY_S, \w — буквы, цифры и «_» (сверено со
@@ -349,8 +356,25 @@ function set_next(st, n, hard, step = true) {
   return st.next;
 }
 
+// int(str) Python: пробелы по краям (ASCII \x1c-\x1f — нет), знак, «_» только между цифрами.
+const INT_S = "[\\t-\\r \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]";
+const PY_INT_STR = new RegExp(`^${INT_S}*([+-]?\\p{Nd}(?:_?\\p{Nd})*)${INT_S}*$`, "u");
+
+function _py_int_big(x) {
+  // int(x) Python без потери точности (BigInt): bool, число и строка цифр; прочее — ошибка.
+  if (typeof x === "string") {
+    const m = PY_INT_STR.exec(x);
+    if (!m) throw new RangeError(`invalid literal for int() with base 10: ${_py_str_repr(x)}`);
+    return BigInt(_ascii_digits(m[1]).replace(/_/g, ""));
+  }
+  if (typeof x !== "number" && typeof x !== "boolean") throw new TypeError("int() argument must be a string or a number");
+  return BigInt(_py_int(x));
+}
+
 function k(n) {
-  return `${_floordiv(_py_int(n), 1000)}k`;
+  // f"{int(n) // 1000}k": // — с округлением вниз и для отрицательных.
+  const i = _py_int_big(n);
+  return `${i / 1000n - (i % 1000n < 0n ? 1n : 0n)}k`;
 }
 
 // --- транскрипт --------------------------------------------------------------------------------

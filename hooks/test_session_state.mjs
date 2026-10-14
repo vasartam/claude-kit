@@ -883,4 +883,45 @@ print(json.dumps([[ss.parse_tokens(v) if not isinstance(v, (list, dict)) else No
       ss.safe_sid(v)]);
     values.forEach((v, i) => assert.deepEqual(got[i], expected[i], JSON.stringify(v)));
   });
+
+  it("транскрипт с сериями пустых строк: записи по кускам и пределу чтения", { skip }, () => {
+    // Node не держит отрезок на каждую пустую строку (иначе хвост из «\n» читался бы в разы дольше
+    // Python): записи и их порядок те же при любых границах кусков по 1 МБ и пределе чтения.
+    const MB = 1 << 20;
+    const entry = (n) => `${JSON.stringify({ type: n % 2 ? "user" : "assistant", n })}\n`;
+    const files = [0, 1, 4095].map((pad, i) => {
+      const p = path.join(c.home, `empty-${i}.jsonl`);
+      write_text(p, "\n".repeat(pad) + entry(1) + "\n".repeat(MB - 1) + entry(2) + "\n".repeat(MB) + entry(3)
+        + "\n\n" + entry(4) + "\n".repeat(pad % 3) + (pad % 2 ? JSON.stringify({ n: 5 }) : ""));
+      return p;
+    });
+    const limits = [ss.TAIL_MAX, 10, MB + 5, 2 * MB + 10];
+    const py = `import json, sys; sys.path.insert(0, ${JSON.stringify(HERE)}); import session_state as ss
+files, limits = json.loads(sys.stdin.read())
+print(json.dumps([[[e["n"] for e in ss.entries_backwards(f, m, needles)] for m in limits]
+                  for f in files for needles in (None, (b'"user"',))]))`;
+    const r = spawnSync(PYTHON, ["-c", py], { input: JSON.stringify([files, limits]), timeout: 60_000,
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    assert.equal(r.status, 0, r.stderr.toString());
+    const got = files.flatMap((f) => [null, [Buffer.from('"user"')]].map((needles) =>
+      limits.map((m) => [...ss.entries_backwards(f, m, needles)].map((e) => e.n))));
+    assert.deepEqual(got, JSON.parse(r.stdout.toString("utf8")));
+    assert.ok(got.flat().some((ns) => ns.length === 5), "хоть один прогон — все записи");
+  });
+
+  it("хвост из 16 МБ пустых строк читается не намного дольше, чем у Python", { skip }, () => {
+    // Замер 14.10.2026: Python 0,44 с, Node с отрезком на каждую пустую строку — 3,1 с, без них — 0,6 с.
+    const p = path.join(c.home, "newlines.jsonl");
+    fs.writeFileSync(p, Buffer.concat([Buffer.alloc(16 << 20, 0x0a), Buffer.from('{"n": 1}\n')]));
+    const py = `import sys, time; sys.path.insert(0, ${JSON.stringify(HERE)}); import session_state as ss
+t = time.perf_counter(); assert [e["n"] for e in ss.entries_backwards(sys.argv[1])] == [1]
+print(time.perf_counter() - t)`;
+    const r = spawnSync(PYTHON, ["-c", py, p], { timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr.toString());
+    const py_s = Number(r.stdout.toString());
+    const t = performance.now();
+    assert.deepEqual([...ss.entries_backwards(p)].map((e) => e.n), [1]);
+    const node_s = (performance.now() - t) / 1000;
+    assert.ok(node_s < 2 * py_s + 1, `Node ${node_s.toFixed(2)} с, Python ${py_s.toFixed(2)} с`);
+  });
 });

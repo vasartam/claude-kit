@@ -88,6 +88,8 @@ export function _well_formed(s) {
 }
 
 export function _py_int(x) {
+  // int(x) Python для числа и bool (int(True) == 1); строки — k() в context-guard.mjs.
+  if (typeof x === "boolean") return Number(x);
   if (!Number.isFinite(x)) throw new RangeError("cannot convert float to integer");
   return Math.trunc(x) || 0;
 }
@@ -840,13 +842,15 @@ function _pread(fd, n, pos) {
 }
 
 function _split_lines(buf) {
+  // bytes.split(b"\n") без пустых строк, кроме первой (она — хвост куска): читатель их всё равно
+  // пропускает, а отрезок на каждую из миллионов пустых строк — в разы медленнее Python.
   const lines = [];
   let start = 0;
   for (let i = buf.indexOf(0x0a); i !== -1; i = buf.indexOf(0x0a, start)) {
-    lines.push(buf.subarray(start, i));
+    if (i > start || !lines.length) lines.push(buf.subarray(start, i));
     start = i + 1;
   }
-  lines.push(buf.subarray(start));
+  if (start < buf.length || !lines.length) lines.push(buf.subarray(start));
   return lines;
 }
 

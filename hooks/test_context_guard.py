@@ -567,11 +567,49 @@ class PlainCompactTest(Base):
         s.ctx("SessionStart", source="resume")
         self.assertEqual(s.state()["pending"], "manual")
 
+    def test_state_numbers_read_like_int(self):
+        """Токены в состоянии — как int() Python: True — 1, строка цифр — число; SessionStart не теряется."""
+        s = self.s
+        old = s.guard / "old.json"
+        for left, shown in ((True, "~0k"), (" 25000 ", "~25k"), ("1_500_000", "~1500k")):
+            old.write_text("{}", encoding="utf-8")
+            t = time.time() - 31 * DAY
+            os.utime(old, (t, t))
+            s.patch_state(compacted_unsorted=left, tokens=5)
+            ctx = s.ctx("SessionStart", source="compact")
+            self.assertIn(f"а {shown} работы перед сжатием", ctx)
+            self.assertEqual((s.state()["compacted_unsorted"], s.state()["tokens"]), (None, None))
+            self.assertFalse(old.exists())
+        s.patch_state(tokens=True)
+        self.assertEqual(s.run(HOOK, b"", "defer", "s1", "0.001k"),
+                         (1, b"", "0k не больше текущего контекста 0k: отложить можно только на порог выше\n"))
+
 
 class InputTest(Base):
     def test_broken_input_is_silent(self):
         for raw in (b"", "{битый".encode(), b"[1, 2]", b"null", b'{"session_id": 5}', b'{"session_id": ""}'):
             self.assertEqual(self.s.run(HOOK, raw), (0, b"", ""), raw)
+
+    def test_module_of_other_version_is_silent(self):
+        """Модуля состояния нет или в нём нет нужного имени (набор обновлён наполовину) — тихий выход 0."""
+        s = self.s
+        kit = Path(self._tmp.name) / "kit"
+        kit.mkdir()
+        hook = kit / HOOK.name
+        shutil.copy(HOOK, hook)
+        module, define = (("session-state.mjs", b"export function parse_tokens(") if HOOK.suffix == ".mjs"
+                          else ("session_state.py", b"def parse_tokens("))
+        text = (HERE / module).read_bytes()
+        self.assertIn(define, text)
+        (kit / module).write_bytes(text.replace(define, define.replace(b"parse_tokens", b"parse_tokens_old")))
+        self.started(350_000)
+        for base in (None, "300k"):  # с CONTEXT_GUARD_BASE имя нужно ещё при загрузке хука
+            if base:
+                s.env["CONTEXT_GUARD_BASE"] = base
+            self.assertEqual(s.hook("UserPromptSubmit", script=hook, prompt="x"), (0, None, ""), base)
+        (kit / module).unlink()
+        self.assertEqual(s.hook("UserPromptSubmit", script=hook, prompt="x"), (0, None, ""))
+        self.assertIn("350k", s.prompt())  # целый набор на том же входе спрашивает
 
     def test_off_switches(self):
         s = self.s
