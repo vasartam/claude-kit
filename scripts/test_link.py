@@ -163,23 +163,37 @@ class LinkTest(unittest.TestCase):
             {"type": "command", "command": 'node "${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs" rewake',
              "timeout": 30}]}]}}))
 
+    def fake_node(self, version):
+        """Поддельный node на PATH, отвечает на --version."""
+        fake = write(Path(self.tmp) / "fakebin" / "node", f"#!/bin/sh\necho {version}\n")
+        fake.chmod(0o755)
+        self.kit.env["PATH"] = str(fake.parent)
+        return fake
+
     @unittest.skipIf(sys.platform == "win32", "поддельный node — shell-скрипт")
     def test_node_hook_gets_node_from_path(self):
         self.node_hook_kit(with_python=True)
-        fake = write(Path(self.tmp) / "fakebin" / "node", "#!/bin/sh\n")
-        fake.chmod(0o755)
-        self.kit.env["PATH"] = str(fake.parent)
+        fake = self.fake_node("v18.0.0")
         self.kit.run("--init", "desktop")
         hook = self.kit.settings()["hooks"]["PreCompact"][0]["hooks"][0]
         self.assertEqual(hook["command"], str(fake))
         self.assertEqual(hook["args"], [(self.kit.root / "hooks" / "guard.mjs").as_posix(), "rewake"])
         self.assertEqual(hook["timeout"], 30)
 
+    @unittest.skipIf(sys.platform == "win32", "поддельный node — shell-скрипт")
+    def test_old_node_falls_back_to_python_sibling(self):
+        self.node_hook_kit(with_python=True)
+        self.fake_node("v16.8.0")
+        out = self.kit.run("--init", "desktop")
+        self.assertIn("Нет node 18+ — хук «guard» подключён на Python", out)
+        hook = self.kit.settings()["hooks"]["PreCompact"][0]["hooks"][0]
+        self.assertEqual(hook["command"], sys.executable)
+
     def test_no_node_falls_back_to_python_sibling(self):
         self.node_hook_kit(with_python=True)
         self.kit.env["PATH"] = str(Path(self.tmp) / "empty")
         out = self.kit.run("--init", "desktop")
-        self.assertIn("Нет node — хук «guard» подключён на Python", out)
+        self.assertIn("Нет node 18+ — хук «guard» подключён на Python", out)
         hook = self.kit.settings()["hooks"]["PreCompact"][0]["hooks"][0]
         self.assertEqual(hook["command"], sys.executable)
         self.assertEqual(hook["args"], [(self.kit.root / "hooks" / "guard.py").as_posix(), "rewake"])
@@ -188,7 +202,7 @@ class LinkTest(unittest.TestCase):
         self.node_hook_kit(with_python=False)
         self.kit.env["PATH"] = str(Path(self.tmp) / "empty")
         out = self.kit.run("--init", "desktop")
-        self.assertIn("Пропущен хук PreCompact «guard»: нет node", out)
+        self.assertIn("Пропущен хук PreCompact «guard»: нет node 18+", out)
         self.assertNotIn("PreCompact", self.kit.settings().get("hooks", {}))
 
     def test_switch_layers_removes_stale(self):

@@ -13,8 +13,8 @@ python scripts/link.py --uninstall             — убрать всё, что �
   skills/<имя>/    навыки — ссылка ~/.claude/skills/<имя> (symlink, на Windows junction);
   hooks/hooks.json хуки в формате плагина Claude Code (${CLAUDE_PLUGIN_ROOT} — каталог слоя) —
                    записи в ~/.claude/settings.json: exec-форма, абсолютные пути, python3 — тот
-                   же python, что запустил link.py, node — найденный на PATH (нет node — тот же
-                   хук <имя>.py рядом, пока он есть); на Windows хуки на bash пропускаются;
+                   же python, что запустил link.py, node — найденный на PATH, 18+ (нет такого —
+                   тот же хук <имя>.py рядом, пока он есть); на Windows хуки на bash пропускаются;
   mods/<имя>/      моды (function hooks; нужен .claude-plugin/plugin.json) — каталог в
                    env.CLAUDE_CODE_PLUGIN_DIRS файла settings.json, разделитель — как у PATH ОС;
   bin/<файл>       утилиты — ссылка ~/.claude/bin/<файл> (кроме Windows);
@@ -32,6 +32,7 @@ exclude — имена навыков, утилит, команд (без .md), 
 ~/.claude можно переопределить переменной CLAUDE_CONFIG_DIR (как и у самого Claude Code).
 """
 
+import functools
 import json
 import os
 import shlex
@@ -262,6 +263,24 @@ def sync_imports(dirs):
 
 # --- хуки: записи в ~/.claude/settings.json ---
 
+NODE_MIN = 18  # хуки .mjs: на 16 молча не работают (нет Object.hasOwn), на 12 падают (top-level await)
+
+
+@functools.lru_cache(maxsize=None)
+def node_path():
+    """node с PATH, если он NODE_MIN+; иначе None."""
+    node = shutil.which("node")
+    if not node:
+        return None
+    try:
+        out = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=10).stdout
+        if int(out.strip().lstrip("v").split(".")[0]) >= NODE_MIN:
+            return node
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def exec_form(command, layer):
     """Команда из hooks.json слоя → [программа, аргументы…]; None — на этой ОС не запустить."""
     root = posix(layer)
@@ -269,7 +288,7 @@ def exec_form(command, layer):
     if parts[0] in ("python3", "python"):
         parts[0] = sys.executable
     elif parts[0] == "node":
-        node = shutil.which("node")
+        node = node_path()
         if node:
             parts[0] = node
             return parts
@@ -277,7 +296,7 @@ def exec_form(command, layer):
         script = next((i for i, p in enumerate(parts) if p.endswith(".mjs")), None)
         if script is None or not Path(parts[script][:-4] + ".py").is_file():
             return None
-        print(f"Нет node — хук «{Path(parts[script]).stem}» подключён на Python")
+        print(f"Нет node {NODE_MIN}+ — хук «{Path(parts[script]).stem}» подключён на Python")
         parts[script] = parts[script][:-4] + ".py"
         parts[0] = sys.executable
     elif parts[0] in ("bash", "sh") or parts[0].endswith(".sh"):
@@ -316,7 +335,7 @@ def wanted_hooks(dirs, exclude):
                 continue
             parts = exec_form(hook["command"], layer)
             if parts is None:
-                why = "нет node" if shlex.split(hook["command"])[0] == "node" else "bash на Windows не запускается"
+                why = f"нет node {NODE_MIN}+" if shlex.split(hook["command"])[0] == "node" else "bash на Windows не запускается"
                 print(f"Пропущен хук {event} «{name}»: {why}")
                 continue
             extra = {k: v for k, v in hook.items() if k not in ("type", "command", "args")}
