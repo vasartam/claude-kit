@@ -1,6 +1,6 @@
 """Проверка context-guard.py без Claude Code: запуск как хука на выдуманной сессии во временном каталоге.
 
-Запуск: python hooks/test_context_guard.py
+Запуск: python hooks/test_context_guard.py; CONTEXT_GUARD_IMPL=node — то же для context-guard.mjs.
 """
 
 import datetime
@@ -16,7 +16,9 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-HOOK = HERE / "context-guard.py"
+IMPL = os.environ.get("CONTEXT_GUARD_IMPL", "")
+HOOK = HERE / ("context-guard.mjs" if IMPL == "node" else "context-guard.py")
+NODE = shutil.which("node") or "node"
 KG_STUB = HERE / "knowledge_guard.py"
 TERMINAL_STUB = HERE.parent / "terminal" / "hooks" / "context-guard.py"
 MODEL = "claude-opus-5-5"
@@ -91,7 +93,8 @@ class Session:
     # --- вызовы ---
 
     def run(self, script, raw, *args):
-        r = subprocess.run([sys.executable, str(script), *args], input=raw, capture_output=True,
+        exe = NODE if Path(script).suffix == ".mjs" else sys.executable
+        r = subprocess.run([exe, str(script), *args], input=raw, capture_output=True,
                            env=self.env, timeout=30)
         return r.returncode, r.stdout, r.stderr.decode("utf-8")
 
