@@ -95,10 +95,10 @@ claude-kit/
     morning-newspaper/     «утренняя газета»: сверстанный отчёт-Artifact и шаблон отчёта после работы без владельца
     session-extract-knowledge/  разложить знания по местам (по просьбе, перед сжатием, по зову хука); таблица «куда» по умолчанию
     session-end/           конец сессии: проверка открытого, раскладка, закрытие способом оболочки, слово прощания
-  hooks/                   хуки общего слоя: hooks.json; context-guard.py (знания — на полочки до сжатия),
+  hooks/                   хуки общего слоя: hooks.json; context-guard.mjs (знания — на полочки до сжатия),
                            model-advisor.py (совет по модели), limit-guard.py (пауза у лимита), msk_time.py
-                           (время МСК и отметка в конце ответа); session_state.py — их источник состояния
-                           сессии; тесты test_*.py; README.md — что какой делает
+                           (время МСК и отметка в конце ответа); session_state.py и session-state.mjs — их
+                           источник состояния сессии; тесты test_*.py, test_*.mjs; README.md — что какой делает
   mods/session-state/      мод: контекст, порог автосжатия, лимиты, модель и effort сессии — файлом для хуков
   mods/msk-time/           мод: время в конец ответа дописывает программа, а не модель
   mods/context-compact/    мод: сжатие после раскладки без панели herdr — сигналом модели, как claude-compact
@@ -132,7 +132,8 @@ claude-kit/
 
 ## Подключить на машине
 
-Нужны git и Python 3.9+ (на Windows команда — `python`). Каталог набора дальше — `<kit>`.
+Нужны git, Python 3.9+ (на Windows команда — `python`) и Node 18+ в PATH (хук context-guard; без node
+link.py пока подключает его Python-версию). Каталог набора дальше — `<kit>`.
 
 ```bash
 git clone git@github.com:vasartam/claude-kit.git <kit>
@@ -181,7 +182,7 @@ python3 <kit>/scripts/link.py --init <слои через запятую>
   claude.ai (Customize → Skills).
 
 Проверка: `python3 <kit>/scripts/link.py --check` пишет «Без изменений…»; тесты (из `<kit>`) —
-`python3 scripts/test_link.py` и `for t in hooks/test_*.py; do python3 "$t"; done`, мод —
+`python3 scripts/test_link.py`, `for t in hooks/test_*.py; do python3 "$t"; done` и `node --test hooks/test_*.mjs`, мод —
 `mods/session-state/README.md`.
 SSH к gitlab.com рвётся — через altssh:443 (`knowledge/git-gitlab.md`); на Windows push — из WSL
 (`windows/USER-CLAUDE.md`).

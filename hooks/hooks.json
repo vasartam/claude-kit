@@ -3,7 +3,7 @@
     "SessionStart": [
       {
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.py\"", "timeout": 10}
+          {"type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.mjs\"", "timeout": 10}
         ]
       }
     ],
@@ -11,7 +11,7 @@
       {
         "hooks": [
           {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/msk_time.py\" prompt", "timeout": 10},
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.py\"", "timeout": 30},
+          {"type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.mjs\"", "timeout": 30},
           {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/model-advisor.py\"", "timeout": 10},
           {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/limit-guard.py\"", "timeout": 10}
         ]
@@ -28,7 +28,7 @@
       {
         "hooks": [
           {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/msk_time.py\" tool", "timeout": 10},
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.py\"", "timeout": 10}
+          {"type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.mjs\"", "timeout": 10}
         ]
       }
     ],
@@ -42,8 +42,8 @@
     "PreCompact": [
       {
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.py\"", "timeout": 60},
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.py\" rewake", "timeout": 30, "asyncRewake": true}
+          {"type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.mjs\"", "timeout": 60},
+          {"type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/context-guard.mjs\" rewake", "timeout": 30, "asyncRewake": true}
         ]
       }
     ]

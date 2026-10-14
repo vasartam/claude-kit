@@ -1,21 +1,30 @@
 # hooks — хуки Claude Code общего слоя
 
-Скрипты на Python 3.9+ без зависимостей; работают в любой оболочке — в терминале (в herdr и без) и в
-приложении. Какие события на какой скрипт — `hooks/hooks.json` (штатный формат плагина Claude Code,
-`${CLAUDE_PLUGIN_ROOT}` — каталог слоя). В `~/.claude/settings.json` их вписывает `scripts/link.py`
+Скрипты на Python 3.9+ или Node 18+ (`.mjs`), без зависимостей; работают в любой оболочке — в терминале
+(в herdr и без) и в приложении. Какие события на какой скрипт — `hooks/hooks.json` (штатный формат плагина
+Claude Code, `${CLAUDE_PLUGIN_ROOT}` — каталог слоя). В `~/.claude/settings.json` их вписывает `scripts/link.py`
 вместе с хуками выбранных слоёв (`terminal/hooks/` и т. д.): exec-форма, абсолютные пути, тот python,
-что запустил link.py. Правка скрипта действует сразу; правка `hooks.json` — после повторного
+что запустил link.py, и node с PATH, если он 18+. Нет такого — link.py подключает Python-версию того же
+хука рядом (`<имя>.py`), пока она есть; нет и её — хук пропущен. Правка скрипта действует сразу; правка `hooks.json` — после повторного
 `python scripts/link.py`, новые записи `settings.json` идущие сессии подхватывают без перезапуска
 (замечено 2026-09-26).
 
 | Скрипт | События | Что делает | Имя для `exclude` |
 |---|---|---|---|
-| `context-guard.py` | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact` | знания — на полочки до сжатия контекста (ниже) | `context-guard` |
+| `context-guard.mjs` | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact` | знания — на полочки до сжатия контекста (ниже) | `context-guard` |
 | `model-advisor.py` | `UserPromptSubmit` | строка «model-advisor: …» к каждому промпту — сверить модель и effort с задачей | `model-advisor` |
 | `limit-guard.py` | `PreToolUse`, `UserPromptSubmit` | пауза у лимита подписки и продолжение после сброса | `limit-guard` |
 | `msk_time.py` | `UserPromptSubmit`, `PostToolUse`, `Stop` | время в контексте (пояс — ключ `clock`); метку `_03.10.2026 16:40 МСК_` в конец ответа дописывает мод `msk-time`, без него — модель | `msk_time` |
-| `session_state.py` | — | модуль, не хук: состояние сессии для трёх хуков выше (ниже) | — |
+| `session_state.py`, `session-state.mjs` | — | модуль, не хук: состояние сессии для трёх хуков выше (ниже); `.mjs` — для хуков на Node | — |
+| `context-guard.py` | — | Python-версия context-guard на один выпуск (ниже) | — |
 | `knowledge_guard.py` | — | заглушка на один выпуск (ниже) | — |
+
+context-guard с 14.10.2026 — на Node (`.mjs`): часть каталогов плагинов принимает хуки только на Node.
+Claude Code без npm (нативный установщик) Node не ставит — на такой машине его ставят отдельно, иначе
+link.py подключит Python-версию. `context-guard.py` и `session_state.py` — эталон: Node-версии
+повторяют их поведение и файлы, тесты сверяют одно с другим. `context-guard.py` остаётся на один выпуск —
+запасной путь link.py на машине без node; его же зовут заглушки по старым путям. `session_state.py` нужен
+model-advisor и limit-guard, пока они на Python: правка модуля — в обе версии сразу.
 
 Машине хук не нужен — его имя в `exclude` конфига машины `~/.claude/claude-kit.json`. Хуки одного
 события Claude Code запускает параллельно: порядок их текстов в контексте не гарантирован, общие файлы
@@ -25,13 +34,15 @@
 (ниже) из мода `mods/session-state`, статусной строки и транскрипта.
 
 Заглушки по старым путям — `knowledge_guard.py` здесь и `terminal/hooks/context-guard.py`,
-`model-advisor.py`, `limit-guard.py`: передают вход и аргументы новому хуку (на Windows —
+`model-advisor.py`, `limit-guard.py`: передают вход и аргументы новому хуку на Python (на Windows —
 `subprocess.call`, иначе `os.execv`), нового нет — молча выход 0. В `hooks.json` их нет. Держат живые
 сессии со старым снимком хуков и окно между `git pull` и `link.py`. Удалить следующим выпуском, после
 перезапуска всех сессий на обеих машинах (`CHANGELOG.md`).
 
 Проверка без Claude Code: `for t in hooks/test_*.py; do python3 "$t"; done` (на Windows —
-`python hooks\test_<имя>.py` по каждому файлу); мод — `mods/session-state/README.md`.
+`python hooks\test_<имя>.py` по каждому файлу), Node-версии — `node --test hooks/test_*.mjs` и
+`CONTEXT_GUARD_IMPL=node python3 hooks/test_context_guard.py` (те же сценарии на `context-guard.mjs`);
+мод — `mods/session-state/README.md`.
 
 ## context-guard
 
@@ -53,7 +64,7 @@
 отложена до 470k: <причина>». Хук берёт порог из ответа на прошлый промпт: округление до 10k вверх, не
 дальше +150k (`CONTEXT_GUARD_STEP`) от текущего; пример внутри текста не считается. Порог следующей
 проверки — `~/.claude/session-status/<id>.ctx-mark`, статусная строка показывает его как `⚑470k`.
-Вручную — `python3 hooks/context-guard.py defer <session_id> 650k`.
+Вручную — `node hooks/context-guard.mjs defer <session_id> 650k`.
 
 | Концовка | Панель herdr | Без панели (приложение, терминал вне herdr) |
 |---|---|---|
@@ -86,7 +97,8 @@
 - Состояние — `~/.claude/context-guard/<session_id>.json`; его и `.prompt.md` удаляет чистка через 30
   дней. Своего нет — подхватывается `~/.claude/knowledge-guard/<session_id>.json` прежнего knowledge_guard:
   переход без волны напоминаний, его отсрочка становится порогом проверки.
-- Тесты — `hooks/test_context_guard.py`, концовка с панелью — с фальшивым `herdr` (не на Windows).
+- Тесты — `hooks/test_context_guard.py` (с `CONTEXT_GUARD_IMPL=node` — на `.mjs`), концовка с панелью —
+  с фальшивым `herdr` (не на Windows).
 
 Почему так:
 
@@ -150,7 +162,16 @@ limit-guard берёт только лимиты, context-guard — модель
   stdout иначе бьётся), `block_stderr`, `write_json` (tmp и `os.replace`, ошибка — тихий пропуск).
   `cleanup_status` удаляет старше 30 дней `*.state.json`, `*.ultra.json`, `*.ctx-mark`, `*.compact.json`, `*.advice.json` и брошенные `*.tmp.*`.
 - `~/.claude` — это `CLAUDE_CONFIG_DIR`, если задан (так изолируются тесты); статусная строка его не знает.
-- Отладка: `python3 hooks/session_state.py <session_id> [transcript.jsonl]` — результат JSON с `src`.
+- Отладка: `python3 hooks/session_state.py <session_id> [transcript.jsonl]` — результат JSON с `src`
+  (`node hooks/session-state.mjs …` — то же у Node-версии).
+- `session-state.mjs` — та же логика и те же файлы на Node; `hooks/test_session_state.mjs` — тесты
+  `test_session_state.py` и сверка выдачи с Python на одних входах. Расхождения, на поведение хуков не
+  влияющие: целый float пишется как `5`, а не `5.0`; NaN/Infinity в JSON не читаются; транскрипт —
+  строгий UTF-8; `\d` — по Unicode версии Node; строка вместо числа в испорченном вручную состоянии
+  сравнивается как число (Python на ней молча выходит).
+- Хуки на Node видят `NODE_OPTIONS` окружения: `--require`/`--import` выполняются до модуля, и битый
+  preload роняет хук, а пишущий в stdout портит его JSON. Изнутри не перехватить, link.py переменную не
+  чистит — с такой переменной Claude Code не запускать.
 
 ## model-advisor
 

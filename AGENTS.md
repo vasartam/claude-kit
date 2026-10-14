@@ -39,15 +39,18 @@
   osascript, launchd, pbcopy, Keychain, iTerm — в `macos/`. Утилиты зовут друг друга как
   `~/.claude/bin/<имя>`, herdr и jq — из PATH.
 - Хуки — `hooks/hooks.json` слоя в штатном формате плагина (`${CLAUDE_PLUGIN_ROOT}` — каталог слоя,
-  первое слово `python3` или `bash`); Python — 3.9+, без зависимостей. Имя для `exclude` — имя
-  скрипта без расширения. Модель, контекст и лимиты хук берёт у `hooks/session_state.py`, общие
-  файлы пишет его `write_json`: хуки одного события идут параллельно.
+  первое слово `python3`, `node` или `bash`); Python — 3.9+, Node — 18+ (`.mjs`, ESM), без зависимостей,
+  только встроенные модули. Имя для `exclude` — имя скрипта без расширения. Модель,
+  контекст и лимиты хук берёт у `hooks/session_state.py` (на Node — `hooks/session-state.mjs`, правка —
+  в обе версии, пока есть хуки на Python), общие файлы пишет его `write_json`: хуки одного события идут
+  параллельно.
 - Хук и мод — ссылки на файлы набора: правка действует во всех сессиях машины сразу. Новая настройка —
   сначала значение в конфиге машины, потом код, иначе поведение сменится посреди работы (12.10.2026:
   подпись времени на минуту стала «UTC+3», пока ключа `clock` не было).
 - После правки `scripts/link.py` или хуков — тесты: `python3 scripts/test_link.py`,
-  `for t in hooks/test_*.py; do python3 "$t"; done`; тест хука — `hooks/test_<имя>.py`. Мод —
-  `claude plugin test` на копии его каталога (`mods/session-state/README.md`).
+  `for t in hooks/test_*.py; do python3 "$t"; done`, `node --test hooks/test_*.mjs`,
+  `CONTEXT_GUARD_IMPL=node python3 hooks/test_context_guard.py`; тест хука — `hooks/test_<имя>.py`
+  или `.mjs`. Мод — `claude plugin test` на копии его каталога (`mods/session-state/README.md`).
 
 ## Git
 

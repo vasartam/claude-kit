@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-10-14 — context-guard на Node
+
+- Хук context-guard теперь `hooks/context-guard.mjs` (Node 18+, без зависимостей), его источник
+  состояния — `hooks/session-state.mjs`; поведение и файлы — как у Python-версий, тесты сверяют одно с
+  другим (`hooks/README.md`). Зачем: часть каталогов плагинов принимает хуки только на Node.
+- `scripts/link.py`: первое слово `node` в `hooks.json` → node из PATH (абсолютный путь), 18+. Нет такого —
+  переходно подключается Python-версия того же хука рядом (`context-guard.py`), нет и её — хук пропущен.
+  Переход на машине: `git pull`, `link.py`; Node нет — поставить, иначе хук останется на Python.
+- `context-guard.py` и заглушки по старым путям (`knowledge_guard.py`, `terminal/hooks/context-guard.py`)
+  удалить следующим выпуском. `session_state.py` остаётся: на нём model-advisor и limit-guard.
+
 ## 2026-10-13 — уборщик групп вкладок «Claude»
 
 - Новый каталог `chrome/` — расширения Chrome, ставятся вручную («Загрузить распакованное»).
