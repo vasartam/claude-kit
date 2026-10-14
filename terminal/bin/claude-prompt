@@ -12,7 +12,10 @@
 1. читает поле ввода с экрана панели (`herdr pane read --format ansi`); подсказка пустого поля
    («Try …») — тусклый текст, она за черновик не считается;
 2. черновик есть — ждёт, пока владелец перестанет печатать (поле не меняется STABLE с), и прячет
-   черновик в stash Claude Code (Ctrl+S); после отправки Claude Code возвращает его в поле сам;
+   черновик в stash Claude Code (Ctrl+S); после отправки Claude Code возвращает его в поле сам.
+   Пока идёт голосовой ввод (пробел зажат), паузы не считаются: в конце поля стоит столбик громкости
+   (▁…█, меняется каждые полсекунды и в тишине), надиктованное — серым до финальной расшифровки, она
+   приходит ~0,6 с после отпускания (снято с экрана 14.10.2026). Пауза в речи дольше STABLE не конец;
 3. отправляет TEXT через `herdr agent prompt`. Сорвалась отправка — повторный Ctrl+S на пустом поле
    возвращает черновик.
 
@@ -28,10 +31,13 @@ import time
 from pathlib import Path
 
 HERDR = shutil.which("herdr") or str(Path.home() / ".local" / "bin" / "herdr")
-STABLE = 2.0          # сек без изменений в поле — владелец не печатает
-TYPING_MAX = 300      # дольше ждать конца набора не будем: прячем как есть
+STABLE = 5.0          # сек без изменений в поле — владелец не печатает
+POLL = 0.5
+WAIT_MAX = 1800       # дольше ждать конца набора и диктовки не будем: прячем как есть
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 DIM = re.compile(r"\x1b\[2m.*?\x1b\[(?:0|22)?m")
+METER = re.compile("[▁▂▃▄▅▆▇█]")                                  # столбик громкости диктовки
+GREY = re.compile(r"\x1b\[38;2;(\d+);\1;\1m[^\x1b]*[^\x1b\s]")     # серый текст: расшифровка не готова
 
 
 def herdr(*args, timeout=15):
@@ -44,23 +50,26 @@ def is_rule(plain):
 
 
 def draft(pane):
-    """Текст в поле ввода; "" — поле пустое; None — поля на экране нет."""
+    """(текст в поле ввода, идёт ли диктовка); текст "" — поле пустое, None — поля на экране нет."""
     try:
         r = herdr("pane", "read", pane, "--source", "visible", "--format", "ansi")
     except (OSError, subprocess.TimeoutExpired):
         return None
     if r.returncode:
-        return None
+        return None, False
     lines = r.stdout.splitlines()
     plain = [ANSI.sub("", l) for l in lines]
     rules = [i for i, l in enumerate(plain) if is_rule(l)]
     # Поле — между двумя соседними линейками, первая строка начинается с «❯» (или «!» в режиме bash).
     for a, b in reversed(list(zip(rules, rules[1:]))):
         if b - a > 1 and plain[a + 1].lstrip()[:1] in ("❯", "!"):
-            body = [ANSI.sub("", DIM.sub("", l)) for l in lines[a + 1:b]]
-            body[0] = body[0].lstrip()[1:]
-            return "\n".join(l.rstrip() for l in body).strip()
-    return None
+            raw = lines[a + 1:b]
+            mark = plain[a + 1].lstrip()[0]
+            raw[0] = raw[0][raw[0].find(mark) + 1:]  # знак поля тоже серый — не в счёт
+            voice = any(METER.search(ANSI.sub("", l)) or GREY.search(l) for l in raw)
+            text = "\n".join(ANSI.sub("", DIM.sub("", l)).rstrip() for l in raw).strip()
+            return text, voice
+    return None, False
 
 
 def agent(target):
@@ -84,16 +93,15 @@ def main():
     target, text = sys.argv[1:]
     pane, st = agent(target)
     stashed = False
-    cur = draft(pane)
+    cur, voice = draft(pane)
     if cur and st != "blocked":
-        deadline = time.time() + TYPING_MAX
-        while time.time() < deadline:
-            time.sleep(STABLE)
-            nxt = draft(pane)
-            if nxt == cur:
-                break
-            cur = nxt
-            if not cur:
+        start = changed = time.time()
+        while time.time() - start < WAIT_MAX:
+            time.sleep(POLL)
+            nxt, voice = draft(pane)
+            if nxt != cur or voice:
+                cur, changed = nxt, time.time()
+            if not cur or time.time() - changed >= STABLE:
                 break
         if cur:
             stash(pane)
