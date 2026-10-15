@@ -31,3 +31,7 @@
 - **`curl` в Windows (schannel) падает `CRYPT_E_REVOCATION_OFFLINE` (код 35)** на исправных
   сайтах с сертификатами Let's Encrypt — не может проверить отзыв через сеть машины. Это не
   поломка сайта: проверять из WSL (`curl` там на OpenSSL) или `curl --ssl-no-revoke`.
+- **Python на Windows пишет CRLF**: `open(p, 'w')` переводит `\n` в `\r\n`, и сценарий оболочки,
+  поправленный так, на Linux падает на первой строке — `sh: 8: set: Illegal option -` (15.10.2026,
+  `setup.sh` по `ssh 'sh -s'`). Писать `open(p, 'w', newline='\n')` или правкой Edit; после — `file`
+  не должен показывать «with CRLF line terminators» (`sed -i 's/\r$//'`).
