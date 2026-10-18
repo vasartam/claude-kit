@@ -26,3 +26,9 @@
   gRPC-API — `.proto`/`.pyi` в официальном SDK (`pip download` в рабочую папку, не ставить в окружение).
   В прозе и примерах сайтов встречаются ошибки: у Finam Trade API пример на сайте шлёт `Bearer`, а по
   схеме, SDK и официальному клиенту JWT идёт в `Authorization` без префикса (личный проект, 2026-09-26).
+- **Магазин на Shopify проверяется без браузера** (2026-10-17): `/meta.json` — `ships_to_countries`
+  (страны доставки, в правилах на сайте их может не быть); `/products/<handle>.js` — цены и наличие;
+  `/products.json?limit=250` — весь каталог; корзина в cookie-файле curl (`/cart/add.js`), затем
+  `/cart/shipping_rates.json?shipping_address[country]=…&[zip]=…&[province]=<код региона>` — тарифы, и
+  `POST /cart/update.js {"discount":"КОД"}` → `discount_codes[].applicable` — рабочие промокоды с
+  агрегаторов (из 25 сработали 3). Медленный сайт рвёт ответ на 20–30 КБ — `curl -C -` в цикле.
