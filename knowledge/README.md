@@ -43,7 +43,7 @@
 | [git-gitlab.md](git-gitlab.md) | `glab`, identity коммитов, SSH через altssh:443, CI, раннер | при создании проекта, CI, сбое SSH |
 | [git-history-rewrite.md](git-history-rewrite.md) | filter-branch без filter-repo, проверка, force push в защищённую ветку, housekeeping | вычистить файлы или подписи из истории |
 | [git-workflow.md](git-workflow.md) | rebase, force-with-lease, конфликты, саморевью, «доехало ли» | перед ребейзом, push, MR |
-| [shell-pitfalls.md](shell-pitfalls.md) | кавычки через stdin, `docker run --rm`, секреты в выводе | перед сложной командой, ssh, docker |
+| [shell-pitfalls.md](shell-pitfalls.md) | кавычки через stdin, `docker run --rm`, секреты в выводе, `awk` при русской локали | перед сложной командой, ssh, docker |
 | [web-ui.md](web-ui.md) | скриншоты безголовым Chromium, CSP, конкурс дизайнов | при вёрстке и её проверке |
 | [analysis.md](analysis.md) | целостность данных, протокол поиска стратегии, знаменатель | перед анализом данных |
 | [scraping.md](scraping.md) | квоты, эпохи полей, SQLite WAL, HAR и токены | при написании сборщика |
