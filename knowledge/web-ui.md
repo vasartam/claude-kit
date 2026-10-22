@@ -4,7 +4,10 @@
   `msedge.exe`, в macOS `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"` (или
   Microsoft Edge там же), в Linux `chromium`. Флаги одни: `--headless=new --disable-gpu
   --hide-scrollbars --allow-file-access-from-files --virtual-time-budget=4000
-  --window-size=1440,2600 --screenshot=<png> <url>`; PNG агент смотрит через Read. Окно уже
+  --window-size=1440,2600 --screenshot=<png> <url>`; PNG агент смотрит через Read. Chrome в macOS после
+  снимка может не выйти сам (22.10.2026, `--headless=new`, Chrome 151: PNG за 2 с, процесс жив, Bash до таймаута):
+  запускать в фоне со своим `--user-data-dir`, ждать, пока PNG перестанет расти, и закрывать процесс.
+  Подсветить изменённое: скачать HTML, вставить `<base href>` и `<style>` с `outline`, снимать file://. Окно уже
   ~500 px не бывает — **ширину телефона даёт страница-обёртка с `<iframe width=390>`**
   (медиазапросы считают ширину iframe). Тема — параметром `?theme=light|dark` в самой странице.
   Данные для file://-предпросмотра — `<script src="sample.js">` с `window.SAMPLE = {…}` (fetch на
