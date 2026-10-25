@@ -45,8 +45,26 @@ xcrun devicectl device capture screenshot --device <UDID> --destination shot.png
 - Журнал и отчёты о падениях — libimobiledevice (`brew install libimobiledevice`): `idevicesyslog -u <UDID> -p <процесс>`,
   `idevicecrashreport -u <UDID> -k -f <процесс> <папка>`. Им нужно **классическое** сопряжение (`idevicepair pair`
   + «Доверять» на телефоне): сопряжение `devicectl` им не подходит, ошибка `Invalid HostID (-21)`.
-- Тапать по экрану с Mac нечем (кроме своего UI-теста XCUITest) — тапает человек, агент снимает экран.
+- Тапать по экрану с Mac нечем (кроме своего UI-теста XCUITest) — тапает человек, агент снимает экран. Сценарий без
+  человека — аргумент запуска, который приложение читает из `UserDefaults` (`process launch … <bundle id> -- -Flag YES`),
+  и пусть оно само проходит шаги.
 - Автоблокировку телефона на время тестов — «Никогда» (Экран и яркость).
+- Серия `capture screenshot` даёт ~3 кадра/с — для анимации мало.
+
+## Видео экрана iPhone
+
+`devicectl device capture screen-record` на iOS 17.5 отказывает («capability Screen Recording is not supported»).
+Работает путь QuickTime: AVFoundation по кабелю, ~59 кадров/с, кадры только при изменении экрана (VFR), строка
+состояния подменена на «09:41». Права — у приложения-хоста терминала (камера), диалога не было.
+
+- Разрешить устройства экрана iOS: `CMIOObjectSetPropertyData` с `kCMIOHardwarePropertyAllowScreenCaptureDevices = 1`
+  на `kCMIOObjectSystemObject`, затем подождать пару секунд — устройство появляется не сразу (ffmpeg этого не делает
+  и iPhone не видит).
+- Брать `AVCaptureDevice` типа `.external`, `.muxed`, `modelID == "iOS Device"` (имя — имя телефона). Рядом есть
+  «Камера (iPhone)» с моделью телефона — это Continuity Camera: выбор по имени «iPhone» включает камеру, видео чёрное.
+- `AVCaptureMovieFileOutput.startRecording` сразу после `startRunning` → `-11805 Cannot Record`: подождать ~3 с.
+- Разбор: `ffmpeg -vf "fps=60,crop=…,scale=…,tile=12x4"` — раскадровка; столбец пикселей
+  `format=gray,crop=1:H:x:0` (gray до crop: у yuv420 ширина 1 не режется) → сырые байты → края карточек по яркости.
 
 ## Грабли
 
