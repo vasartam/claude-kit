@@ -66,7 +66,31 @@ xcrun devicectl device capture screenshot --device <UDID> --destination shot.png
 - Разбор: `ffmpeg -vf "fps=60,crop=…,scale=…,tile=12x4"` — раскадровка; столбец пикселей
   `format=gray,crop=1:H:x:0` (gray до crop: у yuv420 ширина 1 не режется) → сырые байты → края карточек по яркости.
 
+## Память и падения
+
+- **Нехватку памяти ищи отдельно.** iOS пишет её в `JetsamEvent-<дата>.ips` без имени процесса, поэтому
+  `idevicecrashreport -f <процесс>` такие отчёты пропускает. *Почему:* 2026-10-26 из-за этого пропустил, что
+  приложение убили на 2 ГБ, и записал «падений нет». Список отчётов: `devicectl device info files --domain-type
+  systemCrashLogs`. Копия: `devicectl device copy from --domain-type systemCrashLogs --source <имя> --destination <файл>`.
+- **Как читать Jetsam.** Первая строка — заголовок, дальше JSON. Убитый процесс — `largestProcess`, у него
+  `reason: per-process-limit`. Размер — `rpages` × `memoryStatus.pageSize` (16 КБ). Поле `age` — в тиках 24 МГц
+  (A15), а не в наносекундах: сверяй с `age` у `kernel_task`, иначе время запуска выйдет неверным.
+- **Память по секундам без Xcode.** Запись: `xcrun xctrace record --device <UDID> --template 'Activity Monitor'
+  --all-processes --time-limit 120s --output a.trace`. Экспорт: `xcrun xctrace export --input a.trace --xpath
+  '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-live"]'`. Память — колонка
+  `memory-physical-footprint`. Повторы в выгрузке заменены ссылками `ref` на элементы с `id`. Сценарий
+  запускай во время записи, тогда видно, на каком шаге растёт память.
+- **App Group.** `devicectl device info files --domain-type appGroupDataContainer` на iOS 17.5 у бесплатной команды
+  падает с «failed to get a list of files», а `appDataContainer` работает. Запись в App Group видна в журнале:
+  `cfprefsd … wrote the key(s) … group.<id>`.
+- **`idevicesyslog` обрывается** («disconnected»), когда `process launch --terminate-existing` перезапускает
+  приложение. Журнал включай после запуска. `-m <текст>` фильтрует по тексту сообщения.
+
 ## Грабли
+
+- **Удаление приложения бесплатной команды снимает «Доверять»**, если это её последнее приложение на телефоне.
+  После установки запуск падает с `Security … profile has not been explicitly trusted by the user`. Снова «Доверять»
+  в Настройки → Основные → VPN и управление устройством, с интернетом; с Mac это не сделать.
 
 - **XcodeGen 2.46 стирает entitlements.** `entitlements: path:` без `properties:` — `xcodegen generate`
   перезаписывает файл пустым `<dict/>`, подписанная сборка уходит без прав, а неподписанная сборка CI этого не видит.
