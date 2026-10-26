@@ -91,7 +91,6 @@ xcrun devicectl device capture screenshot --device <UDID> --destination shot.png
 - **Удаление приложения бесплатной команды снимает «Доверять»**, если это её последнее приложение на телефоне.
   После установки запуск падает с `Security … profile has not been explicitly trusted by the user`. Снова «Доверять»
   в Настройки → Основные → VPN и управление устройством, с интернетом; с Mac это не сделать.
-
 - **XcodeGen 2.46 стирает entitlements.** `entitlements: path:` без `properties:` — `xcodegen generate`
   перезаписывает файл пустым `<dict/>`, подписанная сборка уходит без прав, а неподписанная сборка CI этого не видит.
   Ключи — в `properties:`.
