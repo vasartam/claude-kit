@@ -45,9 +45,11 @@ xcrun devicectl device capture screenshot --device <UDID> --destination shot.png
 - Журнал и отчёты о падениях — libimobiledevice (`brew install libimobiledevice`): `idevicesyslog -u <UDID> -p <процесс>`,
   `idevicecrashreport -u <UDID> -k -f <процесс> <папка>`. Им нужно **классическое** сопряжение (`idevicepair pair`
   + «Доверять» на телефоне): сопряжение `devicectl` им не подходит, ошибка `Invalid HostID (-21)`.
-- Тапать по экрану с Mac нечем (кроме своего UI-теста XCUITest) — тапает человек, агент снимает экран. Сценарий без
-  человека — аргумент запуска, который приложение читает из `UserDefaults` (`process launch … <bundle id> -- -Flag YES`),
-  и пусть оно само проходит шаги.
+- **Тапы — не человеку.** Проверку на телефоне веди полностью сам: тапает свой UI-тест XCUITest на устройстве или
+  аргумент запуска, который приложение читает из `UserDefaults` (`process launch … <bundle id> -- -Flag YES`).
+  Человека просить только о том, что с Mac не сделать («Доверять» разработчику, системные диалоги до появления
+  теста). *Почему:* 2026-10-26 агент ждал, пока владелец нажмёт кнопку, запись памяти дважды кончилась впустую;
+  владелец: «Хочу, чтобы ты полностью автоматически всё проверял».
 - Автоблокировку телефона на время тестов — «Никогда» (Экран и яркость).
 - Серия `capture screenshot` даёт ~3 кадра/с — для анимации мало.
 
@@ -85,6 +87,14 @@ xcrun devicectl device capture screenshot --device <UDID> --destination shot.png
   `cfprefsd … wrote the key(s) … group.<id>`.
 - **`idevicesyslog` обрывается** («disconnected»), когда `process launch --terminate-existing` перезапускает
   приложение. Журнал включай после запуска. `-m <текст>` фильтрует по тексту сообщения.
+- **Аргументы запуска — только с `--terminate-existing`.** iOS держит предзапущенный процесс приложения (prewarm,
+  ~1,4 МБ), и `process launch` без флага поднимает его: `-- -Flag YES` до `UserDefaults` не доходят, хук молчит.
+  2026-10-26 из-за этого «автонажатие» не сработало, а прогон без нужного состояния выглядел как «ошибка ушла».
+- **Где крутится CPU.** Запись: `xctrace record … --template 'Time Profiler' --instrument 'Activity Monitor'` (CPU и
+  память в одном файле). Экспорт: таблица `@schema="time-profile"` (колонки `time, thread, process, core,
+  thread-state, weight, stack`; кадр — `<frame name=… addr=…><binary name=…/>`, повторы — `ref`). Системные
+  фреймворки на устройстве без символов (адреса), но имя бинарника есть: если в горячих стеках нет ни одного кадра
+  из бинарника приложения, крутит сам SwiftUI/UIKit (цикл раскладки), а не код приложения.
 
 ## Грабли
 
