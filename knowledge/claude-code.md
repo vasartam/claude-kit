@@ -12,7 +12,7 @@
 | `claude-code-context.md` | заполнение контекста по записи сессии, автосжатие, что есть в транскрипте, сколько стоит контекст |
 | `claude-code-permissions.md` | правила `permissions`, классификатор auto mode: что режет, что работает, `autoMode.allow` |
 | `claude-code-headless.md` | `claude -p`: вложенный запуск, детерминированный прогон, `~/.claude/**`, учётка |
-| `claude-in-chrome.md` | браузер агента: группа вкладок, ввод, фильтры секретов, прямые ссылки |
+| `claude-in-chrome.md` | браузер агента: группа вкладок, фильтры секретов, прямые ссылки; ввод — `claude-in-chrome-input.md` |
 | `claude-models.md` | лимиты тарифа, выбор модели и effort, кэш и цены |
 | `model-advice.md` | совет по модели и effort: строка хука `model-advisor`, лимиты и норма недели |
 
