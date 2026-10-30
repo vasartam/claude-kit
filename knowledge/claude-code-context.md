@@ -7,6 +7,13 @@
   Граница сжатия — строка `"subtype":"compact_boundary"` с `preTokens`/`postTokens`
   (`compactMetadata`); сразу после сжатия новых ответов в записи ещё нет. Запись после сжатия
   цела. Записи хранятся около месяца.
+- Окно модели — из каталога моделей Claude Code; для имени не на `claude-` (сторонний провайдер)
+  по умолчанию 200k, и в баннере «context assumed to be 200k tokens». Переопределяется
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS=<токены>` — по коду бинарника сначала окно самой модели,
+  потом эта переменная (только для имён не на `claude-`), иначе 200k.
+  `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT` снимает само предупреждение, но размер
+  окна не задаёт. Переменной `CLAUDE_CODE_CONTEXT_LIMIT` в Claude Code нет — её молча игнорируют,
+  поэтому лимит, выставленный провайдером прокси, на окно не влияет.
 - Автосжатие при окне 1M — на ~967K (замер `preTokens` 967 567). Порог задаёт
   `CLAUDE_CODE_AUTO_COMPACT_WINDOW=<токены>` (или `autoCompactWindow` в настройках) — им же можно
   вызвать автосжатие на маленьком контексте для опыта; `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` на

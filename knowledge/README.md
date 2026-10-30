@@ -28,7 +28,7 @@
 | [claude-code-plugins.md](claude-code-plugins.md) | namespace, кэш, `/reload-plugins`, суффикс `-cmd` | при работе с плагином |
 | [claude-code-hooks.md](claude-code-hooks.md) | события хуков, `PreCompact`, `asyncRewake`, exec-форма | при написании хука |
 | [claude-code-mods.md](claude-code-mods.md) | моды: `CLAUDE_CODE_PLUGIN_DIRS`, приложение, что знают только моды, сжатие из мода | при написании мода |
-| [claude-code-context.md](claude-code-context.md) | заполнение контекста, автосжатие, транскрипт, цена старта | при подсчёте контекста |
+| [claude-code-context.md](claude-code-context.md) | заполнение контекста, окно модели, автосжатие, транскрипт, цена старта | при подсчёте контекста |
 | [claude-code-permissions.md](claude-code-permissions.md) | `permissions`, классификатор auto mode, `autoMode.allow` | отказ классификатора, нужны права |
 | [claude-code-headless.md](claude-code-headless.md) | `claude -p`: вложенный запуск, детерминированный прогон | инструмент зовёт модель |
 | [claude-in-chrome.md](claude-in-chrome.md) | «not connected», группа вкладок, снимок владельцу, прямые ссылки | перед работой в браузере |
