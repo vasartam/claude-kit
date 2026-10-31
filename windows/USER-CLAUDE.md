@@ -4,4 +4,5 @@ Windows 11 + WSL. Знания слоя — `knowledge/` рядом с этим 
 
 - Агент работает в Git Bash (инструмент Bash) и PowerShell 5.1. Git между Windows и WSL (push из WSL, worktree, `glab.exe`, rebase после Windows-git) — `git-windows.md`.
 - Путь с `\` — инструментами Write/Edit, не через Bash: инструмент Bash на Windows превращает `\\` в `\`, а `\v`, `\b` в Python-строке — в управляющие символы.
+- Команда владельцу — для PowerShell 5.1: кнопка запуска под блоком команды в приложении выполняет его в PowerShell, даже с пометкой `bash`, а там нет `&&` (31.10.2026: `ssh-keygen … && ssh …` упала). Блок помечать `powershell`; цепочка — `A; if ($?) { B }` или одна команда.
 - Сложная команда (вложенные кавычки, `wsl.exe` из Git Bash, PowerShell 5.1, файлы между Windows и WSL) — сначала `shell-pitfalls.md` слоя; общие грабли — `<kit>/knowledge/shell-pitfalls.md`.
