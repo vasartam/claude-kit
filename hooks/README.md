@@ -79,8 +79,9 @@ model-advisor и limit-guard, пока они на Python: правка моду
 - `BASE_eff = min(BASE, max(HARD_eff − STEP, 60 % HARD_eff))`, `BASE` — 300k (`CONTEXT_GUARD_BASE`).
   Окно 1M с `autoCompactWindow` 500k — 467k/300k, 200k-модель — 167k/100k.
 - Порог автосжатия — от `session_state` (ниже). `autoCompactWindow` в `~/.claude/settings.json`
-  (владелец ставил 500000 2026-09-27; link.py его не трогает) опускает и его, и `HARD_eff`: сжатию не
-  нужно ждать края окна, длинная сессия дешевле. Вернуть — `/autocompact auto`.
+  (владелец ставил 500000 2026-09-27, убрал 2026-11-02 ради окна 1M; link.py его не трогает) опускает
+  и его, и `HARD_eff`: сжатию не нужно ждать края окна, длинная сессия дешевле. Убрать настройку —
+  `/autocompact auto`.
 
 Раскладка свежая — после отметки `echo knowledge-sorted` набралось не больше 20k токенов
 (`CONTEXT_GUARD_MIN_UNSORTED`) или после вызова навыка `session-extract-knowledge`/`session-end` (с
