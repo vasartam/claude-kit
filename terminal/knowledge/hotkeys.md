@@ -17,6 +17,9 @@
 - `move_tab_previous` / `move_tab_next` есть, но по умолчанию не забинжены (`""`) — кажется, что
   функции нет. Порядок агентов в сайдбаре — `[ui] agent_panel_sort` (`"spaces"` / `"priority"`).
   Сбросить все свои биндинги — `herdr config reset-keys`.
+- Правка `config.toml` сама не применяется: сервер держит старые хоткеи в памяти, пока не
+  выполнен `herdr server reload-config` (`herdr.md`). Без него `[[keys.command]]` запускает
+  прежнюю команду, хотя в файле уже новая.
 - Свои команды — `[[keys.command]]` с `type = "shell"`. Пути в них полные (`$HOME/...`): PATH
   сервера herdr не гарантирован. Ошибку смотреть ручным повтором команды: в
   `herdr-server.log` у `agent.start` только `outcome="error"`.
