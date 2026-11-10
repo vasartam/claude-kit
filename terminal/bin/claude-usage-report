@@ -122,7 +122,8 @@ def d7_spent(log, s, e):
     spent = 0
     for r in inside:
         if prev:
-            spent += r['d7'] - prev['d7'] if r['d7_reset'] == prev['d7_reset'] else r['d7']
+            # Падение при том же сбросе — смена тарифа (проценты другого лимита), не отрицательный расход.
+            spent += max(0, r['d7'] - prev['d7']) if r['d7_reset'] == prev['d7_reset'] else r['d7']
         prev = r
     return spent, s if before else inside[0]['ts']
 

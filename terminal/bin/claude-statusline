@@ -47,8 +47,12 @@ prev_ukey=$([[ -n $sid ]] && $J -r '.usage_key // empty' ~/.claude/session-statu
 answered=false
 [[ -n $ukey && $ukey != "$prev_ukey" ]] && $J -e '.rate_limits.seven_day // .rate_limits.five_hour' <<<$in >/dev/null 2>&1 &&
   answered=true
-lim=$($J -c --argjson s "$old" '
+# Свежий ответ API этой сессии (answered) главнее правила «больший процент», если его сброс не раньше общего
+# (до минуты): при смене тарифа процент падает при том же сбросе — с Pro на Max 10.11.2026 недельный упал
+# с 19% до 1%, а строка до конца недели держала 19% и дневную норму «19/20%».
+lim=$($J -c --argjson s "$old" --argjson fresh "$answered" '
   def newer($a; $b): if $a.used_percentage == null then $b elif $b.used_percentage == null then $a
+    elif $fresh and ($a.resets_at // 0) >= ($b.resets_at // 0) - 60 then $a
     elif [$a.resets_at // 0, $a.used_percentage] >= [$b.resets_at // 0, $b.used_percentage] then $a else $b end;
   (.rate_limits // {}) as $r | ($s // {} | del(.ts)) as $s
   | $s + $r + {five_hour: newer($r.five_hour; $s.five_hour), seven_day: newer($r.seven_day; $s.seven_day)}
