@@ -1245,7 +1245,9 @@ export function read_limits(now = null) {
   // Лимиты подписки {five_hour: {...}, seven_day: {...}} — в каждом used, resets_at, at,
   // age (с), src ("mod" | "statusline"). Только окна со сбросом впереди: внутри окна процент только
   // растёт, поэтому старое показание — нижняя граница и годно до сброса. Лимит общий для аккаунта:
-  // по окну берётся показание с поздним сбросом (с точностью до минуты), потом с большим процентом.
+  // по окну берётся показание с поздним сбросом (с точностью до минуты), потом самое свежее, потом
+  // с большим процентом. Свежее, а не больший процент: при смене тарифа процент падает при том же
+  // сбросе (10.11.2026 с Pro на Max недельный упал с 19% до 1%, а хук держал 19%).
   now = now === null || now === undefined ? _time() : now;
   const best = new Map();
   try {
@@ -1253,7 +1255,7 @@ export function read_limits(now = null) {
       const used = _num(_get(w, "used_percentage"));
       const reset = _num(_get(w, "resets_at"));
       if (used === null || reset === null) continue;
-      const key = [_py_round(reset / 60), used, at || 0];
+      const key = [_py_round(reset / 60), at || 0, used];
       if (!best.has(name) || _tuple_gt(key, best.get(name)[0])) {
         best.set(name, [key, { used, resets_at: reset, at, age: at ? Math.max(0.0, now - at) : null, src }]);
       }

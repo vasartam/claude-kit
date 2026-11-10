@@ -362,10 +362,18 @@ class LimitsTest(Case):
 
     def test_reset_rounded_to_minute(self):
         r7 = 1_791_352_800  # ровный час, как у настоящих сбросов
-        self.mod("a", rate_limits={"seven_day": {"used_percentage": 50, "resets_at": r7 + 0.4, "at": self.now}})
-        self.write_rate_limits(self.now - 500, seven_day={"used_percentage": 52, "resets_at": r7})
+        self.mod("a", rate_limits={"seven_day": {"used_percentage": 50, "resets_at": r7 + 0.4, "at": self.now - 500}})
+        self.write_rate_limits(self.now, seven_day={"used_percentage": 52, "resets_at": r7})
         lim = ss.read_limits(r7 - DAY)
         self.assertEqual((lim["seven_day"]["used"], lim["seven_day"]["src"]), (52, "statusline"))
+
+    def test_plan_change_fresher_lower_wins(self):
+        # Смена тарифа: процент упал при том же сбросе — верно свежее показание, а не большее.
+        r7 = self.now + 3 * DAY
+        self.mod("pro", rate_limits={"seven_day": {"used_percentage": 19, "resets_at": r7, "at": self.now - 300}})
+        self.write_rate_limits(self.now - 60, seven_day={"used_percentage": 4, "resets_at": r7})
+        lim = ss.read_limits(self.now)
+        self.assertEqual((lim["seven_day"]["used"], lim["seven_day"]["src"]), (4, "statusline"))
 
     def test_nothing(self):
         shutil.rmtree(self.status)

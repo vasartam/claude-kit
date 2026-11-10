@@ -666,7 +666,9 @@ def read_limits(now=None):
     """Лимиты подписки {"five_hour": {...}, "seven_day": {...}} — в каждом used, resets_at, at,
     age (с), src ("mod" | "statusline"). Только окна со сбросом впереди: внутри окна процент только
     растёт, поэтому старое показание — нижняя граница и годно до сброса. Лимит общий для аккаунта:
-    по окну берётся показание с поздним сбросом (с точностью до минуты), потом с большим процентом."""
+    по окну берётся показание с поздним сбросом (с точностью до минуты), потом самое свежее, потом
+    с большим процентом. Свежее, а не больший процент: при смене тарифа процент падает при том же
+    сбросе (10.11.2026 с Pro на Max недельный упал с 19% до 1%, а хук держал 19%)."""
     now = time.time() if now is None else now
     best = {}
     try:
@@ -674,7 +676,7 @@ def read_limits(now=None):
             used, reset = _num(w.get("used_percentage")), _num(w.get("resets_at"))
             if used is None or reset is None:
                 continue
-            key = (round(reset / 60), used, at or 0)
+            key = (round(reset / 60), at or 0, used)
             if name not in best or key > best[name][0]:
                 best[name] = (key, {"used": used, "resets_at": reset, "at": at,
                                     "age": max(0.0, now - at) if at else None, "src": src})

@@ -421,10 +421,19 @@ suite("LimitsTest", (c) => {
 
   it("test_reset_rounded_to_minute", () => {
     const r7 = 1_791_352_800; // ровный час, как у настоящих сбросов
-    c.mod("a", { rate_limits: { seven_day: { used_percentage: 50, resets_at: r7 + 0.4, at: c.now } } });
-    write_rate_limits(c.now - 500, { seven_day: { used_percentage: 52, resets_at: r7 } });
+    c.mod("a", { rate_limits: { seven_day: { used_percentage: 50, resets_at: r7 + 0.4, at: c.now - 500 } } });
+    write_rate_limits(c.now, { seven_day: { used_percentage: 52, resets_at: r7 } });
     const lim = ss.read_limits(r7 - DAY);
     assert.deepEqual([lim.seven_day.used, lim.seven_day.src], [52, "statusline"]);
+  });
+
+  it("test_plan_change_fresher_lower_wins", () => {
+    // Смена тарифа: процент упал при том же сбросе — верно свежее показание, а не большее.
+    const r7 = c.now + 3 * DAY;
+    c.mod("pro", { rate_limits: { seven_day: { used_percentage: 19, resets_at: r7, at: c.now - 300 } } });
+    write_rate_limits(c.now - 60, { seven_day: { used_percentage: 4, resets_at: r7 } });
+    const lim = ss.read_limits(c.now);
+    assert.deepEqual([lim.seven_day.used, lim.seven_day.src], [4, "statusline"]);
   });
 
   it("test_nothing", () => {
