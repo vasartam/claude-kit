@@ -9,6 +9,11 @@
   работу в дифф и в список коммитов MR, ревью читается хуже. Инструкция задачи «rebase или merge —
   как принято» — всё равно rebase. Порядок и сверка — навык `/rebase-on-master`.
 - После ребейза — `git push --force-with-lease` в **свою** ветку без вопросов, даже при открытом MR.
+- **Ветка от `origin/<основная>` наследует её как upstream** (`git worktree add -b X <путь> origin/master`,
+  `git checkout -b X origin/master`): `git status` пишет `...origin/master`, голый `git push` падает
+  с «upstream branch … does not match», а при `push.default=upstream` ушёл бы в основную. Создавать с
+  `--no-track`; уже так — пушить явно `git push origin HEAD:refs/heads/<ветка>` и
+  `git branch --set-upstream-to=origin/<ветка>` (12.11.2026: ребейз не запушился с первого раза).
 - **MR с одобрениями — сначала серверный ребейз хостинга** (GitLab: комментарий `/rebase` в MR): он не
   сбрасывает одобрения, а push после локального ребейза сбрасывает. Хостинг сообщил о конфликтах — тогда
   локальный ребейз, force-with-lease и одобрения заново (подробности — навык `feature-autopilot`).
