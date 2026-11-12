@@ -120,7 +120,8 @@ claude-kit/
                            сжатие и закрытие сессии), skills/limit-guard (координатор общего лимита), skills/night-work
                            (ночная работа сессий), knowledge/ (перезапуск и будильники, окружение вкладки Code)
   macos/                   слой macOS: USER-CLAUDE.md (клавиши Option/Cmd, права, HTTPS через curl),
-                           knowledge/ (TCC, iTerm, голос, Keychain, launchd, UI-автоматизация и др.)
+                           knowledge/ (TCC, iTerm, голос, Keychain, launchd, UI-автоматизация и др.),
+                           bin/desktop-screenshots-tidy (снимки экрана старше N дней — со стола в папку, задание launchd)
   windows/                 слой «Windows 11 + WSL»: USER-CLAUDE.md (оболочки, пути с `\`),
                            knowledge/ (shell-pitfalls.md, git-windows.md)
   AGENTS.md, CLAUDE.md     правила для агента, который правит сам набор

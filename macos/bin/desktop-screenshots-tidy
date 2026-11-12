@@ -1,0 +1,139 @@
+#!/bin/bash
+# desktop-screenshots-tidy — переносит снимки и записи экрана старше N дней с Рабочего стола в папку.
+#
+#   desktop-screenshots-tidy [--days N] [--dest DIR] [--dry-run]   перенести сейчас
+#   desktop-screenshots-tidy --install [--days N] [--dest DIR]      ставить задание launchd (раз в 6 ч и при входе)
+#   desktop-screenshots-tidy --uninstall                            снять задание и приложение-обёртку
+#
+# Умолчания: --days 7, --dest "$DESKTOP_SCREENSHOTS_DIR" или ~/Desktop/Скриншоты.
+# Какие файлы: лежат прямо на ~/Desktop, имя начинается с «Снимок экрана», «Запись экрана»,
+# «Screenshot», «Screen Recording» (имена screencapture в русской и английской локали).
+# Возраст — по дате создания файла (перенос в пределах тома её не меняет). Имя занято — « (2)», « (3)»…
+#
+# Почему обёртка: ~/Desktop защищён TCC, а у голого bash под launchd нет приложения, которому macOS
+# выдала бы доступ. Задание запускает крошечный апплет (osacompile) в ~/Applications — доступ к
+# Рабочему столу macOS спросит у него один раз. Сам апплет только зовёт этот скрипт, поэтому правка
+# скрипта права не сбрасывает. Журнал — ~/Library/Logs/desktop-screenshots-tidy.log.
+set -u
+
+LABEL="local.desktop-screenshots-tidy"
+APP="$HOME/Applications/Desktop Screenshots Tidy.app"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG="$HOME/Library/Logs/desktop-screenshots-tidy.log"
+DESKTOP="$HOME/Desktop"
+
+days=7
+dest="${DESKTOP_SCREENSHOTS_DIR:-$HOME/Desktop/Скриншоты}"
+mode=run
+dry=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --days) days="$2"; shift 2 ;;
+    --dest) dest="$2"; shift 2 ;;
+    --dry-run) dry=1; shift ;;
+    --install) mode=install; shift ;;
+    --uninstall) mode=uninstall; shift ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
+  esac
+done
+case "$days" in ''|*[!0-9]*) echo "--days: нужно целое число дней" >&2; exit 2 ;; esac
+
+uninstall() {
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+  rm -f "$PLIST"
+  rm -rf "$APP"
+  echo "снято: задание $LABEL и $APP"
+}
+
+install() {
+  local self q_self q_dest q_log
+  self="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+  [ -L "$0" ] && self="$(readlink "$0")"
+  # пути — в одинарных кавычках для sh внутри do shell script
+  q_self="'${self//\'/\'\\\'\'}'"
+  q_dest="'${dest//\'/\'\\\'\'}'"
+  q_log="'${LOG//\'/\'\\\'\'}'"
+
+  mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents" "$(dirname "$LOG")"
+  rm -rf "$APP"
+  local src; src="$(mktemp -t tidy-applet).applescript"
+  cat > "$src" <<EOF
+try
+  do shell script "$q_self --days $days --dest $q_dest >> $q_log 2>&1"
+end try
+EOF
+  osacompile -o "$APP" "$src" || { echo "osacompile не собрал апплет" >&2; exit 1; }
+  rm -f "$src"
+  # без значка в Dock; после правки Info.plist — переподписать ad hoc, иначе подпись битая
+  /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $LABEL" "$APP/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $LABEL" "$APP/Contents/Info.plist"
+  codesign --force --deep -s - "$APP" || { echo "codesign не подписал апплет" >&2; exit 1; }
+
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string><string>-g</string><string>-j</string><string>$APP</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>21600</integer>
+</dict>
+</plist>
+EOF
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+  launchctl bootstrap "gui/$(id -u)" "$PLIST" || { echo "launchctl bootstrap не принял $PLIST" >&2; exit 1; }
+  echo "поставлено: $LABEL (раз в 6 ч и при входе), старше $days дн. → $dest"
+  echo "первый запуск идёт сейчас: macOS спросит доступ к Рабочему столу для «Desktop Screenshots Tidy» — разрешить"
+  echo "журнал: $LOG"
+}
+
+run() {
+  if ! ls "$DESKTOP" >/dev/null 2>&1; then
+    echo "$(date '+%F %T') нет доступа к $DESKTOP (права TCC у запускающего приложения)" >&2
+    exit 1
+  fi
+  if [ $dry -eq 0 ]; then
+    mkdir -p "$dest" || { echo "$(date '+%F %T') не создать $dest" >&2; exit 1; }
+  fi
+  local cutoff moved=0 failed=0 f name born target base ext n
+  cutoff=$(( $(date +%s) - days * 86400 ))
+  shopt -s nullglob
+  for f in "$DESKTOP"/"Снимок экрана"* "$DESKTOP"/"Запись экрана"* \
+           "$DESKTOP"/Screenshot* "$DESKTOP"/"Screen Recording"*; do
+    [ -f "$f" ] || continue
+    born=$(stat -f %B "$f" 2>/dev/null) || { failed=$((failed + 1)); continue; }
+    [ "$born" -gt 0 ] || born=$(stat -f %m "$f")
+    [ "$born" -le "$cutoff" ] || continue
+    name="$(basename "$f")"
+    target="$dest/$name"
+    if [ -e "$target" ]; then
+      base="${name%.*}"; ext="${name##*.}"; [ "$ext" = "$name" ] && ext="" || ext=".$ext"
+      n=2
+      while [ -e "$dest/$base ($n)$ext" ]; do n=$((n + 1)); done
+      target="$dest/$base ($n)$ext"
+    fi
+    if [ $dry -eq 1 ]; then
+      echo "перенёс бы: $name → $(basename "$target")"
+      moved=$((moved + 1))
+    elif mv -n "$f" "$target"; then
+      moved=$((moved + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
+  local verb="перенесено"; [ $dry -eq 1 ] && verb="к переносу"
+  echo "$(date '+%F %T') $verb: $moved, ошибок: $failed (старше $days дн. → $dest)"
+  [ $failed -eq 0 ]
+}
+
+case "$mode" in
+  install) install ;;
+  uninstall) uninstall ;;
+  run) run ;;
+esac
