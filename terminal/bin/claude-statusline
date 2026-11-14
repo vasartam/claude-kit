@@ -25,8 +25,21 @@ sid=$($J -r '.session_id // empty' <<<$in 2>/dev/null)
 ultra=false
 tr=$($J -r '.transcript_path // empty' <<<$in 2>/dev/null)
 if [[ -n $tr && -r $tr ]]; then
-  last=$(grep -a -o -E '"content":"<local-command-stdout>[^"]{0,40}Ultracode (on|off)|"type":"ultra_effort_(enter|exit)"' "$tr" 2>/dev/null | tail -1)
-  [[ $last == *'Ultracode on'* || $last == *enter* ]] && ultra=true
+  # Инкрементально (14.11.2026: refreshInterval 1 × ~25 сессий × grep по журналам до 96 МБ грузили Мак):
+  # кэш «размер журнала и последнее состояние» на сессию; читаем только дописанное с прошлого раза.
+  uc=~/.claude/statusline-cache; mkdir -p "$uc" 2>/dev/null
+  ukf=$uc/$(basename "$tr" .jsonl).ultra
+  size=$(stat -f %z "$tr" 2>/dev/null || echo 0)
+  prev=0; state=false
+  [[ -r $ukf ]] && read -r prev state <"$ukf"
+  [[ $prev =~ ^[0-9]+$ ]] || { prev=0; state=false; }
+  (( prev > size )) && { prev=0; state=false; }
+  if (( prev < size )); then
+    last=$(tail -c +$((prev + 1)) "$tr" 2>/dev/null | grep -a -o -E '"content":"<local-command-stdout>[^"]{0,40}Ultracode (on|off)|"type":"ultra_effort_(enter|exit)"' 2>/dev/null | tail -1)
+    [[ -n $last ]] && { if [[ $last == *'Ultracode on'* || $last == *enter* ]]; then state=true; else state=false; fi; }
+    echo "$size $state" >"$ukf" 2>/dev/null
+  fi
+  [[ $state == true ]] && ultra=true
 fi
 
 # Лимиты подписки общие для аккаунта, а Claude Code передаёт их из последнего ответа модели в этой сессии:
