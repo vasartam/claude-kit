@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 2026-11-18 — прощание без заготовки
+
+- Без `clock.farewell` сессия прощается своими словами, а не обязательным «Готово.» (`USER-CLAUDE.md`,
+  `knowledge/answer-style.md`, навык `session-end`). Заданное слово работает как раньше.
+
 ## 2026-10-14 — context-guard на Node
 
 - Хук context-guard теперь `hooks/context-guard.mjs` (Node 18+, без зависимостей), его источник
