@@ -17,6 +17,10 @@
 - `move_tab_previous` / `move_tab_next` есть, но по умолчанию не забинжены (`""`) — кажется, что
   функции нет. Порядок агентов в сайдбаре — `[ui] agent_panel_sort` (`"spaces"` / `"priority"`).
   Сбросить все свои биндинги — `herdr config reset-keys`.
+- Переставить вкладку из CLI нельзя: в `herdr tab` есть только list/create/get/focus/rename/close, новая вкладка
+  (и `pane move --new-tab`) встаёт в конец. Порядок меняют только `move_tab_previous`/`move_tab_next`; нажимать
+  их за человека — по правилу нажатий слоя macos (`macos/knowledge/ui-automation.md`). `pane move` процесс не
+  перезапускает, но меняет id панели и вкладки — ломает всё, что хранит эти id (реестры, `$HERDR_TAB_ID` сессии).
 - Правка `config.toml` сама не применяется: сервер держит старые хоткеи в памяти, пока не
   выполнен `herdr server reload-config` (`herdr.md`). Без него `[[keys.command]]` запускает
   прежнюю команду, хотя в файле уже новая.
