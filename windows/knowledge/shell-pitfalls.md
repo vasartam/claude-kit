@@ -16,7 +16,11 @@
   в файл и через stdin: `wsl.exe -e bash -lc "ssh host 'sh -s' < /mnt/c/…/script.sh"`.
 - Из PowerShell не передавать в `bash -lc` строки со скобками и `|` в регулярках — ломается
   кавычивание.
-- В Git Bash аргументы-пути для `wsl.exe` портятся — `MSYS_NO_PATHCONV=1 wsl.exe …`.
+- В Git Bash аргументы-пути для `wsl.exe` портятся — `MSYS_NO_PATHCONV=1 wsl.exe …`. Так же портится
+  любой аргумент с `/` в начале (путь HTTP-API `/version` для `powershell.exe -File` стал
+  `C:/Program Files/Git/version` → 400). Но `MSYS_NO_PATHCONV` задавать **только на одну команду**, не
+  `export`: с ним `curl.exe -o /dev/null` пишет в несуществующий файл — «Failure writing output», размер 0,
+  и замер скорости выглядит как обрыв сети (2026-11-19).
 - Windows-Python не открывает пути Git Bash вида `/c/Users/...` — давать `C:/...` или относительные.
 - PowerShell 5.1: нет `&&`, `||`, `?:`; `2>&1` у внешних программ превращает stderr в ошибки.
   Скрипты `.ps1` с кириллицей — в UTF-8 с BOM, иначе 5.1 читает их в кодировке ANSI: байты
